@@ -1,67 +1,52 @@
 use std::error::Error;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio::sync::mpsc;
 use dotenv::dotenv;
 
 mod audio;
 mod transcribers;
-mod ui;
-mod state;
-mod event_handler;
 
 use audio::{capture_audio_from_mic_with_device, list_audio_devices};
 use transcribers::{TranscriberConfig, create_transcriber};
-use ui::TerminalUi;
-use state::{AppModel, AppState};
-use event_handler::{AppEvent, update_model};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
 
+    println!("=== Fortis Audio Transcription ===\n");
+
     // Get available audio devices
     let device_names = list_audio_devices()?;
 
-    // Initialize TUI and app state
-    let mut terminal_ui = TerminalUi::new()?;
-    let mut model = AppModel::new(device_names);
-
-    terminal_ui.draw(&model)?;
-
-    // ========================================================================
-    // DEVICE SELECTION PHASE
-    // ========================================================================
-    while model.state == AppState::SelectingDevice {
-        if let Ok(Some(event)) = terminal_ui.check_key_press() {
-            update_model(&mut model, event);
-        }
-        terminal_ui.draw(&model)?;
+    // Display and select audio device
+    println!("Available audio devices:");
+    for (index, device) in device_names.iter().enumerate() {
+        println!("  {}. {}", index, device);
     }
 
-    if model.should_exit {
-        return Ok(());
+    print!("\nSelect audio device (enter number): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let selected_device: usize = input.trim().parse()
+        .map_err(|_| "Invalid device number")?;
+
+    if selected_device >= device_names.len() {
+        return Err("Invalid device number".into());
     }
 
-    // ========================================================================
-    // READY TO RECORD PHASE
-    // ========================================================================
-    while model.state == AppState::ReadyToRecord {
-        if let Ok(Some(event)) = terminal_ui.check_key_press() {
-            update_model(&mut model, event);
-        }
-        terminal_ui.draw(&model)?;
-    }
+    println!("\nSelected device: {}", device_names[selected_device]);
+    println!("\nPress Enter to start recording...");
 
-    if model.should_exit {
-        return Ok(());
-    }
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
 
-    // ========================================================================
-    // TRANSCRIPTION SETUP
-    // ========================================================================
+    println!("\n=== Recording Started ===");
+    println!("Press Ctrl+C to stop recording and finish transcription\n");
 
     // Load API key from environment
     let api_key = std::env::var("DEEPGRAM_API_KEY")
@@ -81,13 +66,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Setup Ctrl+C handler
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
+        println!("\n\n=== Stopping Recording ===");
         should_stop_clone.store(true, Ordering::SeqCst);
     });
 
     // Spawn audio capture thread
-    let device_index = model.selected_device;
     let audio_thread = std::thread::spawn(move || {
-        if let Err(err) = capture_audio_from_mic_with_device(device_index, audio_tx, should_stop) {
+        if let Err(err) = capture_audio_from_mic_with_device(selected_device, audio_tx, should_stop) {
             eprintln!("Failed to capture audio: {err}");
         }
     });
@@ -102,65 +87,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    // ========================================================================
-    // RECORDING AND TRANSCRIPTION LOOP
-    // ========================================================================
-    while model.state == AppState::Recording || model.state == AppState::Transcribing {
-        // Check for transcription results and update model
-        while let Ok(result) = result_rx.try_recv() {
-            // Skip end markers, process actual transcript
-            if result.transcript != "Transcription stream ended" {
-                let text = if result.speaker_id.is_some() {
-                    format!("[Speaker {}]: {}", result.speaker_id.unwrap_or(0), result.transcript)
-                } else {
-                    result.transcript
-                };
-
-                // Update model with new transcript
-                update_model(&mut model, AppEvent::TranscriptionReceived(text));
-            }
-        }
-
-        // Update UI
-        terminal_ui.draw(&model)?;
-
-        // Check for user input
-        if let Ok(Some(event)) = terminal_ui.check_key_press() {
-            match event {
-                AppEvent::Quit => {
-                    model.set_state(AppState::Transcribing);
-                    break;
-                }
-                AppEvent::ScrollUp => {
-                    model.scroll_transcript_up();
-                }
-                AppEvent::ScrollDown => {
-                    model.scroll_transcript_down();
-                }
-                _ => {
-                    update_model(&mut model, event);
+    // Process transcription results
+    loop {
+        tokio::select! {
+            result = result_rx.recv() => {
+                match result {
+                    Some(transcript_result) => {
+                        // Skip end markers
+                        if transcript_result.transcript != "Transcription stream ended" {
+                            let text = if let Some(speaker_id) = transcript_result.speaker_id {
+                                format!("[Speaker {}]: {}", speaker_id, transcript_result.transcript)
+                            } else {
+                                transcript_result.transcript
+                            };
+                            println!("{}", text);
+                        }
+                    }
+                    None => {
+                        // Channel closed, transcription finished
+                        break;
+                    }
                 }
             }
+            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                // Continue loop
+            }
         }
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-
-    // ========================================================================
-    // CLEANUP AND SHUTDOWN
-    // ========================================================================
 
     // Wait for audio thread and transcription task to complete
     let _ = audio_thread.join();
     let _ = transcription_task.await;
 
-    // Transition to done state
-    model.set_state(AppState::Done);
-    model.set_status("Transcription completed successfully!".to_string());
-    terminal_ui.draw(&model)?;
-
-    // Keep terminal open briefly to show completion
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    println!("\n=== Transcription Complete ===");
 
     Ok(())
 }
