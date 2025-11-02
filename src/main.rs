@@ -1,11 +1,11 @@
 use std::error::Error;
 use std::time::Duration;
 
+use crossterm::event::{Event, EventStream};
+use dotenv::dotenv;
+use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
-use futures::StreamExt;
-use dotenv::dotenv;
-use crossterm::event::{Event, EventStream};
 
 mod audio;
 mod state;
@@ -15,8 +15,9 @@ mod widgets;
 
 use audio::capture_audio_from_mic_with_device;
 use state::AppState;
-use transcribers::{TranscriberConfig, create_transcriber};
-use tui::{App, init_terminal, restore_terminal, render_ui};
+use transcribers::{create_transcriber, TranscriberConfig};
+use tui::{init_terminal, render_ui, restore_terminal, App};
+use widgets::TranscriptionMessage;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -30,8 +31,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut app = App::new();
 
     // Load API key from environment
-    let api_key = std::env::var("DEEPGRAM_API_KEY")
-        .unwrap_or_else(|_| "YOUR_DEEPGRAM_API_KEY".to_string());
+    let api_key =
+        std::env::var("DEEPGRAM_API_KEY").unwrap_or_else(|_| "YOUR_DEEPGRAM_API_KEY".to_string());
 
     // Create transcriber based on configuration
     let config = TranscriberConfig::Deepgram { api_key };
@@ -47,7 +48,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Spawn audio capture thread using default device (0)
     let audio_thread = std::thread::spawn(move || {
-        if let Err(err) = capture_audio_from_mic_with_device(0, audio_tx, should_stop_audio, is_paused_audio) {
+        if let Err(err) =
+            capture_audio_from_mic_with_device(0, audio_tx, should_stop_audio, is_paused_audio)
+        {
             eprintln!("Failed to capture audio: {err}");
         }
     });
@@ -64,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Main event loop
     let mut event_stream = EventStream::new();
-    let mut tick = interval(Duration::from_secs(1));
+    let mut tick = interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut needs_redraw = true;
 
@@ -90,25 +93,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             maybe_result = result_rx.recv() => {
                 if let Some(transcript_result) = maybe_result {
-                    if transcript_result.transcript != "Transcription stream ended" {
-                        let text = if let Some(speaker_id) = transcript_result.speaker_id {
-                            format!("[Speaker {}]: {}", speaker_id, transcript_result.transcript)
-                        } else {
-                            transcript_result.transcript
-                        };
-                        app.add_transcription(text);
+                    let transcript = transcript_result.transcript;
+                    let speaker_id = transcript_result.speaker_id;
+
+                    if transcript != "Transcription stream ended" {
+                        let speaker = speaker_id.map(|id| format!("Speaker {}", id));
+                        app.add_transcription(TranscriptionMessage::new(speaker, transcript));
                         needs_redraw = true;
                     }
 
                     // Drain any immediately available transcripts to keep the UI snappy
                     while let Ok(additional) = result_rx.try_recv() {
-                        if additional.transcript != "Transcription stream ended" {
-                            let text = if let Some(speaker_id) = additional.speaker_id {
-                                format!("[Speaker {}]: {}", speaker_id, additional.transcript)
-                            } else {
-                                additional.transcript
-                            };
-                            app.add_transcription(text);
+                        let transcript = additional.transcript;
+                        let speaker_id = additional.speaker_id;
+
+                        if transcript != "Transcription stream ended" {
+                            let speaker = speaker_id.map(|id| format!("Speaker {}", id));
+                            app.add_transcription(TranscriptionMessage::new(speaker, transcript));
                             needs_redraw = true;
                         }
                     }

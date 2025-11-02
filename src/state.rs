@@ -102,7 +102,8 @@ impl AppState {
             self.recording_session.elapsed_recording_time
         } else {
             // Currently recording: add current session time to elapsed time
-            self.recording_session.elapsed_recording_time + self.recording_session.start_time.elapsed()
+            self.recording_session.elapsed_recording_time
+                + self.recording_session.start_time.elapsed()
         }
     }
 

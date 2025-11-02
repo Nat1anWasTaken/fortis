@@ -14,11 +14,7 @@ pub struct TranscriptionResult {
 #[async_trait::async_trait]
 pub trait AudioTranscriber: Send + Sync {
     /// Initialize the transcriber with sample rate and channel configuration
-    async fn initialize(
-        &mut self,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<(), Box<dyn Error>>;
+    async fn initialize(&mut self, sample_rate: u32, channels: u16) -> Result<(), Box<dyn Error>>;
 
     /// Close the transcription stream
     async fn close(&mut self) -> Result<(), Box<dyn Error>>;
@@ -39,7 +35,9 @@ pub enum TranscriberConfig {
 }
 
 /// Create a transcriber instance based on the provided configuration
-pub fn create_transcriber(config: TranscriberConfig) -> Result<Box<dyn AudioTranscriber>, Box<dyn Error>> {
+pub fn create_transcriber(
+    config: TranscriberConfig,
+) -> Result<Box<dyn AudioTranscriber>, Box<dyn Error>> {
     match config {
         TranscriberConfig::Deepgram { api_key } => {
             let transcriber = deepgram::DeepgramTranscriber::new(&api_key)?;

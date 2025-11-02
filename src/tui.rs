@@ -1,13 +1,16 @@
-use std::io::{self, stdout};
 use crossterm::{
     event::{self, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use ratatui::prelude::*;
+use std::io::{self, stdout};
 
 use crate::state::AppState;
-use crate::widgets::{DeviceDialog, DeviceDialogState, TranscriptionWidget, TranscriptionWidgetState, FooterWidget};
+use crate::widgets::{
+    DeviceDialog, DeviceDialogState, FooterWidget, TranscriptionMessage, TranscriptionWidget,
+    TranscriptionWidgetState,
+};
 
 /// Application UI state for the TUI
 pub struct App {
@@ -26,7 +29,7 @@ impl App {
     }
 
     /// Add a new transcription message
-    pub fn add_transcription(&mut self, message: String) {
+    pub fn add_transcription(&mut self, message: TranscriptionMessage) {
         self.transcription_state.add_transcription(message);
     }
 
@@ -38,6 +41,16 @@ impl App {
     /// Scroll down in the transcriptions
     pub fn scroll_down(&mut self) {
         self.transcription_state.scroll_down();
+    }
+
+    /// Move focus to the speaker column for the current message
+    pub fn focus_left(&mut self) {
+        self.transcription_state.focus_left();
+    }
+
+    /// Move focus to the content column for the current message
+    pub fn focus_right(&mut self) {
+        self.transcription_state.focus_right();
     }
 
     /// Open the device selection dialog
@@ -108,6 +121,14 @@ impl App {
                 self.scroll_down();
                 true
             }
+            KeyCode::Left => {
+                self.focus_left();
+                true
+            }
+            KeyCode::Right => {
+                self.focus_right();
+                true
+            }
             _ => false,
         }
     }
@@ -133,13 +154,13 @@ pub fn render_ui(frame: &mut Frame, app: &mut App, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),      // Main content
-            Constraint::Length(3),    // Footer
+            Constraint::Min(1),    // Main content
+            Constraint::Length(3), // Footer
         ])
         .split(frame.area());
 
     // Render transcriptions widget
-    TranscriptionWidget::render(frame, &app.transcription_state, state, chunks[0]);
+    TranscriptionWidget::render(frame, &mut app.transcription_state, state, chunks[0]);
 
     // Render footer widget
     FooterWidget::render(frame, chunks[1]);

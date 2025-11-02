@@ -1,7 +1,4 @@
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::{prelude::*, widgets::*};
 
 /// Footer widget displaying control information
 pub struct FooterWidget;
@@ -32,7 +29,7 @@ impl FooterWidget {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" Controls ")
-                    .border_type(BorderType::Rounded)
+                    .border_type(BorderType::Rounded),
             )
             .alignment(Alignment::Center);
 

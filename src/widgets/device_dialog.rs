@@ -1,7 +1,4 @@
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::{prelude::*, widgets::*};
 
 /// State for the device selection dialog
 pub struct DeviceDialogState {
@@ -64,8 +61,7 @@ impl StatefulWidget for DeviceDialog {
         };
 
         // Clear the area behind the dialog
-        let clear_widget = Block::default()
-            .style(Style::default().bg(Color::Black));
+        let clear_widget = Block::default().style(Style::default().bg(Color::Black));
         clear_widget.render(dialog_area, buf);
 
         // Create the list items
@@ -91,14 +87,13 @@ impl StatefulWidget for DeviceDialog {
             })
             .collect();
 
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Select Audio Device ")
-                    .title_alignment(Alignment::Left)
-                    .border_type(BorderType::Rounded)
-            );
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Select Audio Device ")
+                .title_alignment(Alignment::Left)
+                .border_type(BorderType::Rounded),
+        );
 
         Widget::render(list, dialog_area, buf);
     }

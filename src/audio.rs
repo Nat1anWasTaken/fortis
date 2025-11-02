@@ -1,7 +1,7 @@
 use std::error::Error;
-use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
@@ -46,7 +46,9 @@ fn get_device_by_index(index: usize) -> Result<cpal::Device, Box<dyn Error>> {
         return Err("No input devices found".into());
     }
 
-    devices.into_iter().nth(index)
+    devices
+        .into_iter()
+        .nth(index)
         .ok_or_else(|| "Invalid device index".into())
 }
 
@@ -64,9 +66,15 @@ pub fn capture_audio_from_mic_with_device(
     let sample_format = supported_config.sample_format();
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_input_stream::<f32>(&device, &stream_config, tx.clone(), is_paused.clone())?,
-        SampleFormat::I16 => build_input_stream::<i16>(&device, &stream_config, tx.clone(), is_paused.clone())?,
-        SampleFormat::U16 => build_input_stream::<u16>(&device, &stream_config, tx.clone(), is_paused.clone())?,
+        SampleFormat::F32 => {
+            build_input_stream::<f32>(&device, &stream_config, tx.clone(), is_paused.clone())?
+        }
+        SampleFormat::I16 => {
+            build_input_stream::<i16>(&device, &stream_config, tx.clone(), is_paused.clone())?
+        }
+        SampleFormat::U16 => {
+            build_input_stream::<u16>(&device, &stream_config, tx.clone(), is_paused.clone())?
+        }
     };
 
     stream.play()?;

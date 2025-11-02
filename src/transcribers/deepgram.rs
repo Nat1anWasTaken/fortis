@@ -1,10 +1,10 @@
 use std::error::Error;
 use std::time::Duration;
 
-use deepgram::Deepgram;
 use deepgram::common::options::Encoding;
 use deepgram::common::options::Options;
 use deepgram::common::stream_response::StreamResponse;
+use deepgram::Deepgram;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time;
 
@@ -30,9 +30,7 @@ impl DeepgramTranscriber {
     }
 
     /// Format and parse a Deepgram response into transcription results
-    fn format_response(
-        response: &StreamResponse,
-    ) -> Vec<TranscriptionResult> {
+    fn format_response(response: &StreamResponse) -> Vec<TranscriptionResult> {
         let mut results = Vec::new();
 
         match response {
@@ -104,11 +102,7 @@ impl DeepgramTranscriber {
 
 #[async_trait::async_trait]
 impl AudioTranscriber for DeepgramTranscriber {
-    async fn initialize(
-        &mut self,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<(), Box<dyn Error>> {
+    async fn initialize(&mut self, sample_rate: u32, channels: u16) -> Result<(), Box<dyn Error>> {
         self.sample_rate = sample_rate;
         self.channels = channels;
         Ok(())

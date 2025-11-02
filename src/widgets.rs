@@ -4,4 +4,4 @@ mod transcriptions;
 
 pub use device_dialog::{DeviceDialog, DeviceDialogState};
 pub use footer::FooterWidget;
-pub use transcriptions::{TranscriptionWidget, TranscriptionWidgetState};
+pub use transcriptions::{TranscriptionMessage, TranscriptionWidget, TranscriptionWidgetState};
