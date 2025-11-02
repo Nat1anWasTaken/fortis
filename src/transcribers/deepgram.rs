@@ -5,7 +5,7 @@ use deepgram::Deepgram;
 use deepgram::common::options::Encoding;
 use deepgram::common::options::Options;
 use deepgram::common::stream_response::StreamResponse;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time;
 
 use crate::transcribers::{AudioTranscriber, TranscriptionResult};
@@ -111,8 +111,6 @@ impl AudioTranscriber for DeepgramTranscriber {
     ) -> Result<(), Box<dyn Error>> {
         self.sample_rate = sample_rate;
         self.channels = channels;
-        println!("Streaming transcription started. Speak into your microphone...");
-        println!("Press Ctrl+C to stop recording.");
         Ok(())
     }
 
@@ -123,6 +121,7 @@ impl AudioTranscriber for DeepgramTranscriber {
     async fn process_audio_stream(
         &mut self,
         mut audio_receiver: UnboundedReceiver<Vec<u8>>,
+        result_sender: UnboundedSender<TranscriptionResult>,
     ) -> Result<(), Box<dyn Error>> {
         let options = Options::builder()
             .encoding(Encoding::Linear16)
@@ -169,11 +168,11 @@ impl AudioTranscriber for DeepgramTranscriber {
                     match response {
                         Some(Ok(result)) => {
                             let results = Self::format_response(&result);
-                            for res in results {
-                                if let Some(speaker_id) = res.speaker_id {
-                                    println!("Speaker {}: {}", speaker_id, res.transcript);
-                                } else {
-                                    println!("{}", res.transcript);
+                            // Send each result to the UI through the channel
+                            for transcription_result in results {
+                                if let Err(err) = result_sender.send(transcription_result) {
+                                    eprintln!("Failed to send transcription result: {err}");
+                                    break;
                                 }
                             }
                         }

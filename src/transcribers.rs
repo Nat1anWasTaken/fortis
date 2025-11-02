@@ -1,5 +1,5 @@
 use std::error::Error;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 pub mod deepgram;
 
@@ -23,11 +23,12 @@ pub trait AudioTranscriber: Send + Sync {
     /// Close the transcription stream
     async fn close(&mut self) -> Result<(), Box<dyn Error>>;
 
-    /// Process a chunk of audio data from the audio receiver
+    /// Process a chunk of audio data from the audio receiver and send results through the result channel
     /// This method handles the main transcription loop
     async fn process_audio_stream(
         &mut self,
         audio_receiver: UnboundedReceiver<Vec<u8>>,
+        result_sender: UnboundedSender<TranscriptionResult>,
     ) -> Result<(), Box<dyn Error>>;
 }
 

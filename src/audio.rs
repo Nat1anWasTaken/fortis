@@ -1,5 +1,4 @@
 use std::error::Error;
-use std::io::{self, Write};
 use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,16 +7,14 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use tokio::sync::mpsc::UnboundedSender;
 
-#[allow(dead_code)]
 pub fn list_audio_devices() -> Result<Vec<String>, Box<dyn Error>> {
     let host = cpal::default_host();
     let devices = host.input_devices()?;
 
     let mut device_list = Vec::new();
-    for (index, device) in devices.enumerate() {
+    for device in devices {
         let name = device.name()?;
-        device_list.push(name.clone());
-        println!("[{}] {}", index, name);
+        device_list.push(name);
     }
 
     if device_list.is_empty() {
@@ -27,7 +24,7 @@ pub fn list_audio_devices() -> Result<Vec<String>, Box<dyn Error>> {
     Ok(device_list)
 }
 
-pub fn select_audio_device() -> Result<cpal::Device, Box<dyn Error>> {
+fn get_device_by_index(index: usize) -> Result<cpal::Device, Box<dyn Error>> {
     let host = cpal::default_host();
     let devices: Vec<cpal::Device> = host.input_devices()?.collect();
 
@@ -35,34 +32,18 @@ pub fn select_audio_device() -> Result<cpal::Device, Box<dyn Error>> {
         return Err("No input devices found".into());
     }
 
-    println!("\nAvailable audio devices:");
-    for (index, device) in devices.iter().enumerate() {
-        println!("[{}] {}", index, device.name()?);
-    }
-
-    print!("\nSelect device (0-{}): ", devices.len() - 1);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    let index: usize = input.trim().parse()
-        .map_err(|_| "Invalid input. Please enter a number")?;
-
     devices.into_iter().nth(index)
         .ok_or_else(|| "Invalid device index".into())
 }
 
-pub fn capture_audio_from_mic(
+pub fn capture_audio_from_mic_with_device(
+    device_index: usize,
     tx: UnboundedSender<Vec<u8>>,
     should_stop: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>> {
-    let device = select_audio_device()?;
-
-    println!("\nUsing device: {}", device.name()?);
+    let device = get_device_by_index(device_index)?;
 
     let supported_config = device.default_input_config()?;
-    println!("Default config: {:?}", supported_config);
 
     let stream_config: StreamConfig = supported_config.config();
     let sample_format = supported_config.sample_format();
@@ -75,7 +56,7 @@ pub fn capture_audio_from_mic(
 
     stream.play()?;
 
-    // Keep the stream alive until Ctrl+C is pressed
+    // Keep the stream alive until should_stop is signaled
     while !should_stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(100));
     }
