@@ -311,7 +311,7 @@ impl TranscriptionWidget {
             let start_index = end_index.saturating_sub(visible_lines);
 
             let focused = state.focus;
-            let highlight_style = Style::default().bg(Color::Blue).fg(Color::White);
+            let highlight_style = Style::default().fg(Color::Yellow);
             let speaker_style = Style::default().fg(Color::LightCyan);
             let message_style = Style::default();
 
