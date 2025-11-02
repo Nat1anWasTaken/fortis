@@ -1,11 +1,9 @@
 use std::error::Error;
-use std::time::Duration;
 
 use crossterm::event::{Event, EventStream};
 use dotenv::dotenv;
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use tokio::time::{interval, MissedTickBehavior};
 
 mod audio;
 mod state;
@@ -67,8 +65,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Main event loop
     let mut event_stream = EventStream::new();
-    let mut tick = interval(Duration::from_millis(100));
-    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut needs_redraw = true;
 
     loop {
@@ -114,9 +110,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                 }
-            }
-            _ = tick.tick() => {
-                needs_redraw = true;
             }
         }
 

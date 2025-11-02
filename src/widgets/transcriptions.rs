@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 
 use ratatui::{prelude::*, widgets::*};
 
-use crate::audio::get_device_name;
 use crate::state::{AppState, RecordingState};
 
 #[derive(Debug, Clone)]
@@ -620,8 +619,8 @@ impl TranscriptionWidget {
                     .title(build_title(app_state))
                     .title_top(build_device_title(app_state).right_aligned())
                     .border_type(BorderType::Rounded),
-            )
-            .wrap(Wrap { trim: false });
+            );
+            // Note: Wrapping disabled for performance (was taking 80ms+)
 
         frame.render_widget(paragraph, area);
     }
@@ -641,8 +640,8 @@ fn build_title(app_state: &AppState) -> Span<'_> {
 }
 
 fn build_device_title(app_state: &AppState) -> Line<'_> {
-    let device_name = get_device_name(app_state.current_device_index())
-        .unwrap_or_else(|_| "Unknown Device".to_string());
+    // Use cached device name to avoid expensive system calls every frame
+    let device_name = app_state.current_device_name();
     let device_title = format!(" 🎤 {} (D: Change) ", device_name);
     Line::from(Span::styled(device_title, Style::default().fg(Color::Cyan)))
 }

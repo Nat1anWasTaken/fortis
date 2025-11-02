@@ -20,6 +20,8 @@ pub struct AppState {
     recording_session: RecordingSession,
     /// Current audio device index
     current_device_index: usize,
+    /// Cached device name (to avoid expensive system calls every frame)
+    current_device_name: String,
     /// Speaker ID to custom name mapping
     speaker_map: HashMap<i32, String>,
 }
@@ -36,6 +38,10 @@ struct RecordingSession {
 
 impl AppState {
     pub fn new() -> Self {
+        // Get initial device name (one-time cost at startup)
+        let current_device_name = crate::audio::get_device_name(0)
+            .unwrap_or_else(|_| "Unknown Device".to_string());
+
         Self {
             should_quit: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
@@ -45,6 +51,7 @@ impl AppState {
                 last_pause_time: None,
             },
             current_device_index: 0,
+            current_device_name,
             speaker_map: HashMap::new(),
         }
     }
@@ -125,9 +132,17 @@ impl AppState {
         self.current_device_index
     }
 
+    /// Get the cached current device name (no system calls)
+    pub fn current_device_name(&self) -> &str {
+        &self.current_device_name
+    }
+
     /// Set the current audio device index
     pub fn set_device_index(&mut self, index: usize) {
         self.current_device_index = index;
+        // Update cached device name
+        self.current_device_name = crate::audio::get_device_name(index)
+            .unwrap_or_else(|_| "Unknown Device".to_string());
     }
 
     /// Get the display name for a speaker ID
