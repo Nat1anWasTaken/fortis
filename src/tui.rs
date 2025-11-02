@@ -1,7 +1,6 @@
 use std::io::{self, stdout};
-use std::time::Duration;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, KeyCode, KeyEventKind},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -55,52 +54,61 @@ impl App {
     }
 
     /// Handle keyboard input
-    pub fn handle_key_event(&mut self, key: event::KeyEvent, state: &mut AppState) {
+    pub fn handle_key_event(&mut self, key: event::KeyEvent, state: &mut AppState) -> bool {
         if key.kind != KeyEventKind::Press {
-            return;
+            return false;
         }
 
         // Handle device dialog input separately
         if let Some(dialog_state) = &mut self.device_dialog_state {
-            match key.code {
+            let handled = match key.code {
                 KeyCode::Esc => {
                     self.close_device_dialog();
+                    true
                 }
                 KeyCode::Up => {
                     dialog_state.select_previous();
+                    true
                 }
                 KeyCode::Down => {
                     dialog_state.select_next();
+                    true
                 }
                 KeyCode::Enter => {
                     let selected_device = dialog_state.selected();
                     state.set_device_index(selected_device);
                     self.close_device_dialog();
                     // TODO: Need to restart audio capture with new device
+                    true
                 }
-                _ => {}
-            }
-            return;
+                _ => false,
+            };
+            return handled;
         }
 
         // Normal key handling
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 state.request_quit();
+                true
             }
             KeyCode::Char(' ') => {
                 state.toggle_recording();
+                true
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 self.open_device_dialog(state.current_device_index());
+                true
             }
             KeyCode::Up => {
                 self.scroll_up();
+                true
             }
             KeyCode::Down => {
                 self.scroll_down();
+                true
             }
-            _ => {}
+            _ => false,
         }
     }
 }
@@ -139,14 +147,5 @@ pub fn render_ui(frame: &mut Frame, app: &mut App, state: &AppState) {
     // Render device selection dialog if open
     if let Some(dialog_state) = &mut app.device_dialog_state {
         frame.render_stateful_widget(DeviceDialog, frame.area(), dialog_state);
-    }
-}
-
-/// Poll for keyboard events with timeout
-pub fn poll_events(timeout: Duration) -> io::Result<Option<Event>> {
-    if event::poll(timeout)? {
-        Ok(Some(event::read()?))
-    } else {
-        Ok(None)
     }
 }

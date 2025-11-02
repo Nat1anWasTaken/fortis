@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use ratatui::{
     prelude::*,
     widgets::*,
@@ -9,22 +11,29 @@ use crate::state::{AppState, RecordingState};
 /// State for the transcription widget
 pub struct TranscriptionWidgetState {
     /// List of transcription messages
-    pub transcriptions: Vec<String>,
+    transcriptions: VecDeque<String>,
     /// Current scroll position
     pub scroll_position: usize,
 }
 
 impl TranscriptionWidgetState {
+    /// Maximum number of messages retained in memory to keep rendering cheap
+    const MAX_TRANSCRIPTIONS: usize = 2_000;
+
     pub fn new() -> Self {
         Self {
-            transcriptions: Vec::new(),
+            transcriptions: VecDeque::new(),
             scroll_position: 0,
         }
     }
 
     /// Add a new transcription message
     pub fn add_transcription(&mut self, message: String) {
-        self.transcriptions.push(message);
+        if self.transcriptions.len() >= Self::MAX_TRANSCRIPTIONS {
+            self.transcriptions.pop_front();
+            self.clamp_scroll();
+        }
+        self.transcriptions.push_back(message);
         // Auto-scroll to bottom when new message arrives
         self.scroll_to_bottom();
     }
@@ -36,12 +45,26 @@ impl TranscriptionWidgetState {
 
     /// Scroll up in the transcriptions
     pub fn scroll_up(&mut self) {
-        self.scroll_position = self.scroll_position.saturating_add(1);
+        if !self.transcriptions.is_empty() {
+            self.scroll_position = self.scroll_position.saturating_add(1);
+            self.clamp_scroll();
+        }
     }
 
     /// Scroll down in the transcriptions
     pub fn scroll_down(&mut self) {
         self.scroll_position = self.scroll_position.saturating_sub(1);
+    }
+
+    /// Clamp scroll offset so we never go beyond available history
+    fn clamp_scroll(&mut self) {
+        let max_scroll = self
+            .transcriptions
+            .len()
+            .saturating_sub(1);
+        if self.scroll_position > max_scroll {
+            self.scroll_position = max_scroll;
+        }
     }
 }
 
@@ -51,16 +74,29 @@ pub struct TranscriptionWidget;
 impl TranscriptionWidget {
     /// Render the transcription widget
     pub fn render(frame: &mut Frame, state: &TranscriptionWidgetState, app_state: &AppState, area: Rect) {
-        let text: Vec<Line> = if state.transcriptions.is_empty() {
+        let total = state.transcriptions.len();
+
+        let text: Vec<Line> = if total == 0 {
             vec![Line::from(Span::styled(
                 "Waiting for transcriptions...",
                 Style::default().fg(Color::DarkGray),
             ))]
         } else {
-            state.transcriptions
-                .iter()
-                .map(|msg| Line::from(msg.clone()))
-                .collect()
+            // Only materialize the portion of history that fits inside the viewport
+            let interior_height = area.height.saturating_sub(2).max(1) as usize;
+            let visible_lines = total.min(interior_height);
+            let max_scroll = total.saturating_sub(visible_lines);
+            let offset_from_bottom = state.scroll_position.min(max_scroll);
+            let end_index = total.saturating_sub(offset_from_bottom);
+            let start_index = end_index.saturating_sub(visible_lines);
+
+            let mut lines = Vec::with_capacity(visible_lines);
+            for idx in start_index..end_index {
+                if let Some(msg) = state.transcriptions.get(idx) {
+                    lines.push(Line::from(msg.as_str()));
+                }
+            }
+            lines
         };
 
         // Build title with recording state indicator and timer
@@ -91,8 +127,7 @@ impl TranscriptionWidget {
                     )
                     .border_type(BorderType::Rounded)
             )
-            .wrap(Wrap { trim: false })
-            .scroll((state.scroll_position as u16, 0));
+            .wrap(Wrap { trim: false });
 
         frame.render_widget(paragraph, area);
     }

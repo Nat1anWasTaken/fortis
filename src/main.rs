@@ -2,8 +2,10 @@ use std::error::Error;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+use tokio::time::{interval, MissedTickBehavior};
+use futures::StreamExt;
 use dotenv::dotenv;
-use crossterm::event::Event;
+use crossterm::event::{Event, EventStream};
 
 mod audio;
 mod state;
@@ -14,7 +16,7 @@ mod widgets;
 use audio::capture_audio_from_mic_with_device;
 use state::AppState;
 use transcribers::{TranscriberConfig, create_transcriber};
-use tui::{App, init_terminal, restore_terminal, render_ui, poll_events};
+use tui::{App, init_terminal, restore_terminal, render_ui};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -61,31 +63,67 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Main event loop
+    let mut event_stream = EventStream::new();
+    let mut tick = interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut needs_redraw = true;
+
     loop {
-        // Render the UI with centralized state
-        terminal.draw(|frame| render_ui(frame, &mut app, &state))?;
+        tokio::select! {
+            biased;
+            maybe_event = event_stream.next() => {
+                match maybe_event {
+                    Some(Ok(Event::Key(key))) => {
+                        if app.handle_key_event(key, &mut state) {
+                            needs_redraw = true;
+                        }
+                    }
+                    Some(Ok(Event::Resize(_, _))) => {
+                        needs_redraw = true;
+                    }
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => {
+                        eprintln!("Event stream error: {err}");
+                    }
+                    None => break,
+                }
+            }
+            maybe_result = result_rx.recv() => {
+                if let Some(transcript_result) = maybe_result {
+                    if transcript_result.transcript != "Transcription stream ended" {
+                        let text = if let Some(speaker_id) = transcript_result.speaker_id {
+                            format!("[Speaker {}]: {}", speaker_id, transcript_result.transcript)
+                        } else {
+                            transcript_result.transcript
+                        };
+                        app.add_transcription(text);
+                        needs_redraw = true;
+                    }
 
-        // Poll for events with a short timeout
-        if let Ok(Some(event)) = poll_events(Duration::from_millis(16)) {
-            if let Event::Key(key) = event {
-                app.handle_key_event(key, &mut state);
+                    // Drain any immediately available transcripts to keep the UI snappy
+                    while let Ok(additional) = result_rx.try_recv() {
+                        if additional.transcript != "Transcription stream ended" {
+                            let text = if let Some(speaker_id) = additional.speaker_id {
+                                format!("[Speaker {}]: {}", speaker_id, additional.transcript)
+                            } else {
+                                additional.transcript
+                            };
+                            app.add_transcription(text);
+                            needs_redraw = true;
+                        }
+                    }
+                }
+            }
+            _ = tick.tick() => {
+                needs_redraw = true;
             }
         }
 
-        // Check for transcription results
-        while let Ok(transcript_result) = result_rx.try_recv() {
-            // Skip end markers
-            if transcript_result.transcript != "Transcription stream ended" {
-                let text = if let Some(speaker_id) = transcript_result.speaker_id {
-                    format!("[Speaker {}]: {}", speaker_id, transcript_result.transcript)
-                } else {
-                    transcript_result.transcript
-                };
-                app.add_transcription(text);
-            }
+        if needs_redraw {
+            terminal.draw(|frame| render_ui(frame, &mut app, &state))?;
+            needs_redraw = false;
         }
 
-        // Check if we should quit (from centralized state)
         if state.should_quit() {
             break;
         }
