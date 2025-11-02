@@ -5,61 +5,94 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use ratatui::{
-    prelude::*,
-    widgets::*,
-};
+use ratatui::prelude::*;
 
-/// Application state for the TUI
+use crate::state::AppState;
+use crate::widgets::{DeviceDialog, DeviceDialogState, TranscriptionWidget, TranscriptionWidgetState, FooterWidget};
+
+/// Application UI state for the TUI
 pub struct App {
-    /// List of transcription messages
-    pub transcriptions: Vec<String>,
-    /// Whether the app should quit
-    pub should_quit: bool,
-    /// Current scroll position
-    pub scroll_position: usize,
+    /// Transcription widget state
+    pub transcription_state: TranscriptionWidgetState,
+    /// Device selection dialog state (None when closed)
+    pub device_dialog_state: Option<DeviceDialogState>,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
-            transcriptions: Vec::new(),
-            should_quit: false,
-            scroll_position: 0,
+            transcription_state: TranscriptionWidgetState::new(),
+            device_dialog_state: None,
         }
     }
 
     /// Add a new transcription message
     pub fn add_transcription(&mut self, message: String) {
-        self.transcriptions.push(message);
-        // Auto-scroll to bottom when new message arrives
-        self.scroll_to_bottom();
-    }
-
-    /// Scroll to the bottom of the transcriptions
-    pub fn scroll_to_bottom(&mut self) {
-        self.scroll_position = 0;
+        self.transcription_state.add_transcription(message);
     }
 
     /// Scroll up in the transcriptions
     pub fn scroll_up(&mut self) {
-        self.scroll_position = self.scroll_position.saturating_add(1);
+        self.transcription_state.scroll_up();
     }
 
     /// Scroll down in the transcriptions
     pub fn scroll_down(&mut self) {
-        self.scroll_position = self.scroll_position.saturating_sub(1);
+        self.transcription_state.scroll_down();
+    }
+
+    /// Open the device selection dialog
+    pub fn open_device_dialog(&mut self, current_device: usize) {
+        // Load available devices
+        if let Ok(devices) = crate::audio::list_audio_devices() {
+            self.device_dialog_state = Some(DeviceDialogState::new(devices, current_device));
+        }
+    }
+
+    /// Close the device selection dialog
+    pub fn close_device_dialog(&mut self) {
+        self.device_dialog_state = None;
     }
 
     /// Handle keyboard input
-    pub fn handle_key_event(&mut self, key: event::KeyEvent) {
+    pub fn handle_key_event(&mut self, key: event::KeyEvent, state: &mut AppState) {
         if key.kind != KeyEventKind::Press {
             return;
         }
 
+        // Handle device dialog input separately
+        if let Some(dialog_state) = &mut self.device_dialog_state {
+            match key.code {
+                KeyCode::Esc => {
+                    self.close_device_dialog();
+                }
+                KeyCode::Up => {
+                    dialog_state.select_previous();
+                }
+                KeyCode::Down => {
+                    dialog_state.select_next();
+                }
+                KeyCode::Enter => {
+                    let selected_device = dialog_state.selected();
+                    state.set_device_index(selected_device);
+                    self.close_device_dialog();
+                    // TODO: Need to restart audio capture with new device
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Normal key handling
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                self.should_quit = true;
+                state.request_quit();
+            }
+            KeyCode::Char(' ') => {
+                state.toggle_recording();
+            }
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                self.open_device_dialog(state.current_device_index());
             }
             KeyCode::Up => {
                 self.scroll_up();
@@ -88,7 +121,7 @@ pub fn restore_terminal() -> io::Result<()> {
 }
 
 /// Render the UI
-pub fn render_ui(frame: &mut Frame, app: &App) {
+pub fn render_ui(frame: &mut Frame, app: &mut App, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -97,70 +130,16 @@ pub fn render_ui(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
 
-    // Render transcriptions block
-    render_transcriptions(frame, app, chunks[0]);
+    // Render transcriptions widget
+    TranscriptionWidget::render(frame, &app.transcription_state, state, chunks[0]);
 
-    // Render footer with controls
-    render_footer(frame, chunks[1]);
-}
+    // Render footer widget
+    FooterWidget::render(frame, chunks[1]);
 
-/// Render the transcriptions block
-fn render_transcriptions(frame: &mut Frame, app: &App, area: Rect) {
-    let text: Vec<Line> = if app.transcriptions.is_empty() {
-        vec![Line::from(Span::styled(
-            "Waiting for transcriptions...",
-            Style::default().fg(Color::DarkGray),
-        ))]
-    } else {
-        app.transcriptions
-            .iter()
-            .map(|msg| Line::from(msg.clone()))
-            .collect()
-    };
-
-    let paragraph = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Transcriptions ")
-                .title_alignment(Alignment::Center)
-                .border_type(BorderType::Rounded)
-        )
-        .wrap(Wrap { trim: false })
-        .scroll((app.scroll_position as u16, 0));
-
-    frame.render_widget(paragraph, area);
-}
-
-/// Render the footer with control information
-fn render_footer(frame: &mut Frame, area: Rect) {
-    let controls = vec![
-        ("q/ESC", "Quit"),
-        ("↑/↓", "Scroll"),
-    ];
-
-    let control_text: Vec<Span> = controls
-        .iter()
-        .flat_map(|(key, desc)| {
-            vec![
-                Span::styled(*key, Style::default().fg(Color::Yellow).bold()),
-                Span::raw(": "),
-                Span::raw(*desc),
-                Span::raw("  "),
-            ]
-        })
-        .collect();
-
-    let paragraph = Paragraph::new(Line::from(control_text))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Controls ")
-                .border_type(BorderType::Rounded)
-        )
-        .alignment(Alignment::Center);
-
-    frame.render_widget(paragraph, area);
+    // Render device selection dialog if open
+    if let Some(dialog_state) = &mut app.device_dialog_state {
+        frame.render_stateful_widget(DeviceDialog, frame.area(), dialog_state);
+    }
 }
 
 /// Poll for keyboard events with timeout

@@ -1,6 +1,4 @@
 use std::error::Error;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -8,16 +6,22 @@ use dotenv::dotenv;
 use crossterm::event::Event;
 
 mod audio;
+mod state;
 mod transcribers;
 mod tui;
+mod widgets;
 
 use audio::capture_audio_from_mic_with_device;
+use state::AppState;
 use transcribers::{TranscriberConfig, create_transcriber};
 use tui::{App, init_terminal, restore_terminal, render_ui, poll_events};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
+
+    // Initialize centralized state (single source of truth)
+    let mut state = AppState::new();
 
     // Initialize TUI
     let mut terminal = init_terminal()?;
@@ -35,13 +39,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
-    let should_stop = Arc::new(AtomicBool::new(false));
-    let should_stop_clone = Arc::clone(&should_stop);
-    let should_stop_audio = Arc::clone(&should_stop);
+    // Get handles for audio capture thread
+    let should_stop_audio = state.quit_handle();
+    let is_paused_audio = state.pause_handle();
 
     // Spawn audio capture thread using default device (0)
     let audio_thread = std::thread::spawn(move || {
-        if let Err(err) = capture_audio_from_mic_with_device(0, audio_tx, should_stop_audio) {
+        if let Err(err) = capture_audio_from_mic_with_device(0, audio_tx, should_stop_audio, is_paused_audio) {
             eprintln!("Failed to capture audio: {err}");
         }
     });
@@ -58,13 +62,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Main event loop
     loop {
-        // Render the UI
-        terminal.draw(|frame| render_ui(frame, &app))?;
+        // Render the UI with centralized state
+        terminal.draw(|frame| render_ui(frame, &mut app, &state))?;
 
         // Poll for events with a short timeout
         if let Ok(Some(event)) = poll_events(Duration::from_millis(50)) {
             if let Event::Key(key) = event {
-                app.handle_key_event(key);
+                app.handle_key_event(key, &mut state);
             }
         }
 
@@ -81,9 +85,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        // Check if we should quit
-        if app.should_quit {
-            should_stop_clone.store(true, Ordering::SeqCst);
+        // Check if we should quit (from centralized state)
+        if state.should_quit() {
             break;
         }
 

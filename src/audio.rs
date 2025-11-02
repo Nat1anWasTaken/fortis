@@ -24,6 +24,20 @@ pub fn list_audio_devices() -> Result<Vec<String>, Box<dyn Error>> {
     Ok(device_list)
 }
 
+pub fn get_device_name(index: usize) -> Result<String, Box<dyn Error>> {
+    let host = cpal::default_host();
+    let devices: Vec<cpal::Device> = host.input_devices()?.collect();
+
+    if devices.is_empty() {
+        return Err("No input devices found".into());
+    }
+
+    devices
+        .get(index)
+        .ok_or_else(|| "Invalid device index".into())
+        .and_then(|device| device.name().map_err(|e| e.into()))
+}
+
 fn get_device_by_index(index: usize) -> Result<cpal::Device, Box<dyn Error>> {
     let host = cpal::default_host();
     let devices: Vec<cpal::Device> = host.input_devices()?.collect();
@@ -40,6 +54,7 @@ pub fn capture_audio_from_mic_with_device(
     device_index: usize,
     tx: UnboundedSender<Vec<u8>>,
     should_stop: Arc<AtomicBool>,
+    is_paused: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>> {
     let device = get_device_by_index(device_index)?;
 
@@ -49,9 +64,9 @@ pub fn capture_audio_from_mic_with_device(
     let sample_format = supported_config.sample_format();
 
     let stream = match sample_format {
-        SampleFormat::F32 => build_input_stream::<f32>(&device, &stream_config, tx.clone())?,
-        SampleFormat::I16 => build_input_stream::<i16>(&device, &stream_config, tx.clone())?,
-        SampleFormat::U16 => build_input_stream::<u16>(&device, &stream_config, tx.clone())?,
+        SampleFormat::F32 => build_input_stream::<f32>(&device, &stream_config, tx.clone(), is_paused.clone())?,
+        SampleFormat::I16 => build_input_stream::<i16>(&device, &stream_config, tx.clone(), is_paused.clone())?,
+        SampleFormat::U16 => build_input_stream::<u16>(&device, &stream_config, tx.clone(), is_paused.clone())?,
     };
 
     stream.play()?;
@@ -68,6 +83,7 @@ fn build_input_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
     tx: UnboundedSender<Vec<u8>>,
+    is_paused: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: cpal::Sample + Send + 'static,
@@ -77,6 +93,11 @@ where
     device.build_input_stream(
         config,
         move |data: &[T], _| {
+            // Skip processing if paused
+            if is_paused.load(Ordering::SeqCst) {
+                return;
+            }
+
             let mut bytes = Vec::new();
 
             if num_channels == 2 {
