@@ -97,8 +97,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     let speaker_id = transcript_result.speaker_id;
 
                     if transcript != "Transcription stream ended" {
-                        let speaker = speaker_id.map(|id| format!("Speaker {}", id));
-                        app.add_transcription(TranscriptionMessage::new(speaker, transcript));
+                        let speaker = speaker_id.map(|id| state.get_speaker_name(id));
+                        app.add_transcription(TranscriptionMessage::new(speaker, speaker_id, transcript));
                         needs_redraw = true;
                     }
 
@@ -108,8 +108,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         let speaker_id = additional.speaker_id;
 
                         if transcript != "Transcription stream ended" {
-                            let speaker = speaker_id.map(|id| format!("Speaker {}", id));
-                            app.add_transcription(TranscriptionMessage::new(speaker, transcript));
+                            let speaker = speaker_id.map(|id| state.get_speaker_name(id));
+                            app.add_transcription(TranscriptionMessage::new(speaker, speaker_id, transcript));
                             needs_redraw = true;
                         }
                     }

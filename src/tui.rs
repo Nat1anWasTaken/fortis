@@ -99,6 +99,38 @@ impl App {
             return handled;
         }
 
+        // Handle edit mode input separately
+        if self.transcription_state.is_editing() {
+            let handled = match key.code {
+                KeyCode::Esc => {
+                    self.transcription_state.cancel_editing();
+                    true
+                }
+                KeyCode::Enter => {
+                    self.transcription_state.apply_edit(state);
+                    true
+                }
+                KeyCode::Backspace => {
+                    self.transcription_state.handle_backspace();
+                    true
+                }
+                KeyCode::Left => {
+                    self.transcription_state.move_cursor_left();
+                    true
+                }
+                KeyCode::Right => {
+                    self.transcription_state.move_cursor_right();
+                    true
+                }
+                KeyCode::Char(c) => {
+                    self.transcription_state.handle_char_input(c);
+                    true
+                }
+                _ => false,
+            };
+            return handled;
+        }
+
         // Normal key handling
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
@@ -111,6 +143,10 @@ impl App {
             }
             KeyCode::Char('d') | KeyCode::Char('D') => {
                 self.open_device_dialog(state.current_device_index());
+                true
+            }
+            KeyCode::Enter => {
+                self.transcription_state.start_editing();
                 true
             }
             KeyCode::Up => {

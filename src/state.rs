@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,6 +20,8 @@ pub struct AppState {
     recording_session: RecordingSession,
     /// Current audio device index
     current_device_index: usize,
+    /// Speaker ID to custom name mapping
+    speaker_map: HashMap<i32, String>,
 }
 
 /// Recording session tracking
@@ -42,6 +45,7 @@ impl AppState {
                 last_pause_time: None,
             },
             current_device_index: 0,
+            speaker_map: HashMap::new(),
         }
     }
 
@@ -124,5 +128,23 @@ impl AppState {
     /// Set the current audio device index
     pub fn set_device_index(&mut self, index: usize) {
         self.current_device_index = index;
+    }
+
+    /// Get the display name for a speaker ID
+    pub fn get_speaker_name(&self, speaker_id: i32) -> String {
+        self.speaker_map
+            .get(&speaker_id)
+            .cloned()
+            .unwrap_or_else(|| format!("Speaker {}", speaker_id))
+    }
+
+    /// Set a custom name for a speaker ID
+    pub fn set_speaker_name(&mut self, speaker_id: i32, name: String) {
+        self.speaker_map.insert(speaker_id, name);
+    }
+
+    /// Check if a speaker has a custom name
+    pub fn has_custom_name(&self, speaker_id: i32) -> bool {
+        self.speaker_map.contains_key(&speaker_id)
     }
 }

@@ -8,12 +8,17 @@ use crate::state::{AppState, RecordingState};
 #[derive(Debug, Clone)]
 pub struct TranscriptionMessage {
     pub speaker: Option<String>,
+    pub speaker_id: Option<i32>,
     pub content: String,
 }
 
 impl TranscriptionMessage {
-    pub fn new(speaker: Option<String>, content: String) -> Self {
-        Self { speaker, content }
+    pub fn new(speaker: Option<String>, speaker_id: Option<i32>, content: String) -> Self {
+        Self {
+            speaker,
+            speaker_id,
+            content,
+        }
     }
 }
 
@@ -29,6 +34,22 @@ struct FocusLocation {
     segment: FocusSegment,
 }
 
+/// Edit mode state for modifying speaker names or message content
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EditMode {
+    None,
+    EditingSpeaker {
+        message_index: usize,
+        buffer: String,
+        cursor: usize,
+    },
+    EditingMessage {
+        message_index: usize,
+        buffer: String,
+        cursor: usize,
+    },
+}
+
 /// State for the transcription widget
 pub struct TranscriptionWidgetState {
     /// List of transcription messages
@@ -39,6 +60,8 @@ pub struct TranscriptionWidgetState {
     focus: Option<FocusLocation>,
     /// Height of the inner viewport (rows available for messages)
     viewport_height: usize,
+    /// Current edit mode state
+    edit_mode: EditMode,
 }
 
 impl TranscriptionWidgetState {
@@ -51,6 +74,7 @@ impl TranscriptionWidgetState {
             scroll_position: 0,
             focus: None,
             viewport_height: 0,
+            edit_mode: EditMode::None,
         }
     }
 
@@ -280,6 +304,183 @@ impl TranscriptionWidgetState {
             .and_then(|message| message.speaker.as_ref())
             .is_some()
     }
+
+    /// Check if currently in edit mode
+    pub fn is_editing(&self) -> bool {
+        !matches!(self.edit_mode, EditMode::None)
+    }
+
+    /// Start editing the currently focused segment
+    pub fn start_editing(&mut self) {
+        if self.is_editing() {
+            return;
+        }
+
+        self.ensure_focus_valid();
+        let Some(focus) = self.focus else {
+            return;
+        };
+
+        let Some(message) = self.transcriptions.get(focus.message_index) else {
+            return;
+        };
+
+        match focus.segment {
+            FocusSegment::Speaker => {
+                if let Some(speaker) = &message.speaker {
+                    self.edit_mode = EditMode::EditingSpeaker {
+                        message_index: focus.message_index,
+                        buffer: speaker.clone(),
+                        cursor: speaker.len(),
+                    };
+                }
+            }
+            FocusSegment::Message => {
+                self.edit_mode = EditMode::EditingMessage {
+                    message_index: focus.message_index,
+                    buffer: message.content.clone(),
+                    cursor: message.content.len(),
+                };
+            }
+        }
+    }
+
+    /// Cancel editing and discard changes
+    pub fn cancel_editing(&mut self) {
+        self.edit_mode = EditMode::None;
+    }
+
+    /// Apply the current edit and update the message
+    pub fn apply_edit(&mut self, app_state: &mut AppState) {
+        match &self.edit_mode {
+            EditMode::EditingSpeaker {
+                message_index,
+                buffer,
+                ..
+            } => {
+                if let Some(message) = self.transcriptions.get(*message_index) {
+                    let trimmed = buffer.trim().to_string();
+                    if !trimmed.is_empty() {
+                        // Update the speaker mapping if we have a speaker_id
+                        if let Some(speaker_id) = message.speaker_id {
+                            app_state.set_speaker_name(speaker_id, trimmed.clone());
+
+                            // Update all messages with the same speaker_id
+                            for msg in self.transcriptions.iter_mut() {
+                                if msg.speaker_id == Some(speaker_id) {
+                                    msg.speaker = Some(trimmed.clone());
+                                }
+                            }
+                        } else {
+                            // No speaker_id, just update this message
+                            if let Some(msg) = self.transcriptions.get_mut(*message_index) {
+                                msg.speaker = Some(trimmed);
+                            }
+                        }
+                    }
+                }
+            }
+            EditMode::EditingMessage {
+                message_index,
+                buffer,
+                ..
+            } => {
+                if let Some(message) = self.transcriptions.get_mut(*message_index) {
+                    message.content = buffer.clone();
+                }
+            }
+            EditMode::None => {}
+        }
+        self.edit_mode = EditMode::None;
+    }
+
+    /// Handle a character input during editing
+    pub fn handle_char_input(&mut self, c: char) {
+        match &mut self.edit_mode {
+            EditMode::EditingSpeaker {
+                buffer, cursor, ..
+            } => {
+                buffer.insert(*cursor, c);
+                *cursor += 1;
+            }
+            EditMode::EditingMessage {
+                buffer, cursor, ..
+            } => {
+                buffer.insert(*cursor, c);
+                *cursor += 1;
+            }
+            EditMode::None => {}
+        }
+    }
+
+    /// Handle backspace during editing
+    pub fn handle_backspace(&mut self) {
+        match &mut self.edit_mode {
+            EditMode::EditingSpeaker {
+                buffer, cursor, ..
+            } => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                    buffer.remove(*cursor);
+                }
+            }
+            EditMode::EditingMessage {
+                buffer, cursor, ..
+            } => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                    buffer.remove(*cursor);
+                }
+            }
+            EditMode::None => {}
+        }
+    }
+
+    /// Move cursor left during editing
+    pub fn move_cursor_left(&mut self) {
+        match &mut self.edit_mode {
+            EditMode::EditingSpeaker { cursor, .. } | EditMode::EditingMessage { cursor, .. } => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            EditMode::None => {}
+        }
+    }
+
+    /// Move cursor right during editing
+    pub fn move_cursor_right(&mut self) {
+        match &mut self.edit_mode {
+            EditMode::EditingSpeaker {
+                buffer, cursor, ..
+            } => {
+                if *cursor < buffer.len() {
+                    *cursor += 1;
+                }
+            }
+            EditMode::EditingMessage {
+                buffer, cursor, ..
+            } => {
+                if *cursor < buffer.len() {
+                    *cursor += 1;
+                }
+            }
+            EditMode::None => {}
+        }
+    }
+
+    /// Get the current edit buffer and cursor for rendering
+    pub fn get_edit_state(&self) -> Option<(&str, usize, bool)> {
+        match &self.edit_mode {
+            EditMode::EditingSpeaker {
+                buffer, cursor, ..
+            } => Some((buffer, *cursor, true)),
+            EditMode::EditingMessage {
+                buffer, cursor, ..
+            } => Some((buffer, *cursor, false)),
+            EditMode::None => None,
+        }
+    }
 }
 
 /// Transcription display widget
@@ -312,40 +513,98 @@ impl TranscriptionWidget {
 
             let focused = state.focus;
             let highlight_style = Style::default().fg(Color::Yellow);
+            let edit_style = Style::default().fg(Color::Green);
             let speaker_style = Style::default().fg(Color::LightCyan);
             let message_style = Style::default();
+
+            let edit_state = state.get_edit_state();
 
             let mut lines = Vec::with_capacity(visible_lines);
             for idx in start_index..end_index {
                 if let Some(message) = state.transcriptions.get(idx) {
                     let mut spans: Vec<Span> = Vec::new();
 
+                    // Render speaker segment
                     if let Some(speaker) = &message.speaker {
-                        let mut style = speaker_style;
-                        if matches!(
+                        let is_focused = matches!(
                             focused,
                             Some(FocusLocation {
                                 message_index,
                                 segment: FocusSegment::Speaker,
                             }) if message_index == idx
-                        ) {
-                            style = highlight_style;
+                        );
+
+                        // Check if this segment is being edited
+                        if let Some((buffer, cursor, is_speaker_edit)) = edit_state {
+                            if is_speaker_edit
+                                && matches!(
+                                    &state.edit_mode,
+                                    EditMode::EditingSpeaker { message_index, .. } if *message_index == idx
+                                )
+                            {
+                                // Render with cursor
+                                spans.push(Span::raw("["));
+                                let before = &buffer[..cursor];
+                                let after = &buffer[cursor..];
+                                if !before.is_empty() {
+                                    spans.push(Span::styled(before, edit_style));
+                                }
+                                spans.push(Span::styled("█", edit_style.add_modifier(Modifier::REVERSED)));
+                                if !after.is_empty() {
+                                    spans.push(Span::styled(after, edit_style));
+                                }
+                                spans.push(Span::raw("]: "));
+                            } else {
+                                // Normal display with focus highlight
+                                let style = if is_focused { highlight_style } else { speaker_style };
+                                let speaker_text = format!("[{}]: ", speaker);
+                                spans.push(Span::styled(speaker_text, style));
+                            }
+                        } else {
+                            // Normal display with focus highlight
+                            let style = if is_focused { highlight_style } else { speaker_style };
+                            let speaker_text = format!("[{}]: ", speaker);
+                            spans.push(Span::styled(speaker_text, style));
                         }
-                        let speaker_text = format!("[{}]: ", speaker);
-                        spans.push(Span::styled(speaker_text, style));
                     }
 
-                    let mut style = message_style;
-                    if matches!(
+                    // Render message segment
+                    let is_focused = matches!(
                         focused,
                         Some(FocusLocation {
                             message_index,
                             segment: FocusSegment::Message,
                         }) if message_index == idx
-                    ) {
-                        style = highlight_style;
+                    );
+
+                    // Check if this segment is being edited
+                    if let Some((buffer, cursor, is_speaker_edit)) = edit_state {
+                        if !is_speaker_edit
+                            && matches!(
+                                &state.edit_mode,
+                                EditMode::EditingMessage { message_index, .. } if *message_index == idx
+                            )
+                        {
+                            // Render with cursor
+                            let before = &buffer[..cursor];
+                            let after = &buffer[cursor..];
+                            if !before.is_empty() {
+                                spans.push(Span::styled(before, edit_style));
+                            }
+                            spans.push(Span::styled("█", edit_style.add_modifier(Modifier::REVERSED)));
+                            if !after.is_empty() {
+                                spans.push(Span::styled(after, edit_style));
+                            }
+                        } else {
+                            // Normal display with focus highlight
+                            let style = if is_focused { highlight_style } else { message_style };
+                            spans.push(Span::styled(message.content.as_str(), style));
+                        }
+                    } else {
+                        // Normal display with focus highlight
+                        let style = if is_focused { highlight_style } else { message_style };
+                        spans.push(Span::styled(message.content.as_str(), style));
                     }
-                    spans.push(Span::styled(message.content.as_str(), style));
 
                     lines.push(Line::from(spans));
                 }

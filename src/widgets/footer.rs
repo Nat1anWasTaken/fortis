@@ -9,6 +9,8 @@ impl FooterWidget {
         let controls = vec![
             ("SPACE", "Pause/Resume"),
             ("↑/↓", "Scroll"),
+            ("←/→", "Focus Speaker/Message"),
+            ("ENTER", "Edit"),
             ("q/ESC", "Quit"),
         ];
 
