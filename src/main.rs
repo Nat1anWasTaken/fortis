@@ -6,24 +6,27 @@ use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Sample, SampleFormat, StreamConfig};
-use deepgram::Deepgram;
-use deepgram::common::options::Encoding;
-use deepgram::common::options::Options;
-use deepgram::common::stream_response::StreamResponse;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio::time;
 
 use dotenv::dotenv;
+
+mod transcribers;
+
+use transcribers::{TranscriberConfig, create_transcriber};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
 
+    // Load API key from environment
     let api_key = std::env::var("DEEPGRAM_API_KEY")
         .unwrap_or_else(|_| "YOUR_DEEPGRAM_API_KEY".to_string());
-    let dg = Deepgram::new(&api_key)?;
 
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    // Create transcriber based on configuration
+    let config = TranscriberConfig::Deepgram { api_key };
+    let mut transcriber = create_transcriber(config)?;
+
+    let (tx, rx) = mpsc::unbounded_channel();
     let should_stop = Arc::new(AtomicBool::new(false));
     let should_stop_clone = Arc::clone(&should_stop);
 
@@ -40,133 +43,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let options = Options::builder()
-        .encoding(Encoding::Linear16)
-        .diarize(true)
-        .build();
+    // Initialize transcriber with sample rate and channels
+    transcriber.initialize(48000, 1).await?;
 
-    let mut handle = dg
-        .transcription()
-        .stream_request_with_options(options)
-        .sample_rate(48000)
-        .channels(1)
-        .handle()
-        .await?;
-    let mut keep_alive = time::interval(Duration::from_secs(3));
+    // Process audio stream
+    transcriber.process_audio_stream(rx).await?;
 
-    println!("Streaming transcription started. Speak into your microphone...");
-    println!("Press Ctrl+C to stop recording.");
-    let mut audio_buffer = Vec::new();
-
-    loop {
-        tokio::select! {
-            _ = keep_alive.tick() => {
-                if let Err(err) = handle.keep_alive().await {
-                    eprintln!("Keep-alive error: {err}");
-                    break;
-                }
-            }
-            maybe_audio = rx.recv() => {
-                match maybe_audio {
-                    Some(audio_data) => {
-                        audio_buffer.extend_from_slice(&audio_data);
-                        if let Err(err) = handle.send_data(audio_data).await {
-                            eprintln!("Send error: {err}");
-                            break;
-                        }
-                    }
-                    None => {
-                        // Audio capture ended, finalize the stream
-                        if let Err(err) = handle.finalize().await {
-                            eprintln!("Finalize error: {err}");
-                        }
-                        break;
-                    }
-                }
-            }
-            response = handle.receive() => {
-                match response {
-                    Some(Ok(result)) => {
-                        format_and_print_response(&result);
-                    }
-                    Some(Err(err)) => {
-                        eprintln!("Receive error: {err}");
-                        break;
-                    }
-                    None => break,
-                }
-            }
-        }
-    }
-
-    // Save audio to file
-    if !audio_buffer.is_empty() {
-        match save_audio_to_file(&audio_buffer) {
-            Ok(path) => println!("Audio saved to: {}", path),
-            Err(err) => eprintln!("Failed to save audio: {err}"),
-        }
-    }
-
-    handle.close_stream().await?;
+    // Close the transcriber
+    transcriber.close().await?;
     let _ = audio_thread.join();
 
     Ok(())
-}
-
-fn format_and_print_response(response: &StreamResponse) {
-    match response {
-        StreamResponse::TranscriptResponse { channel, .. } => {
-            // Process each alternative (usually just one)
-            for alternative in &channel.alternatives {
-                // Build speaker-aware output from words
-                let mut current_speaker: Option<i32> = None;
-                let mut speaker_message = String::new();
-
-                for word in &alternative.words {
-                    // Check if speaker changed
-                    if word.speaker != current_speaker {
-                        // Print previous speaker's message if any
-                        if let Some(speaker_id) = current_speaker {
-                            println!("Speaker {}: {}", speaker_id, speaker_message.trim());
-                            speaker_message.clear();
-                        }
-                        current_speaker = word.speaker;
-                    }
-
-                    // Add word to current message
-                    if !speaker_message.is_empty() {
-                        speaker_message.push(' ');
-                    }
-                    speaker_message.push_str(&word.word);
-                }
-
-                // Print final speaker's message
-                if let Some(speaker_id) = current_speaker {
-                    println!("Speaker {}: {}", speaker_id, speaker_message.trim());
-                }
-
-                // If no speaker data, just print the transcript
-                if current_speaker.is_none() && !alternative.transcript.is_empty() {
-                    println!("{}", alternative.transcript);
-                }
-            }
-        }
-        StreamResponse::SpeechStartedResponse { .. } => {
-            // Optionally log speech detection
-            // println!("Speech detected");
-        }
-        StreamResponse::UtteranceEndResponse { .. } => {
-            // Optionally log utterance end
-            // println!("Utterance ended");
-        }
-        StreamResponse::TerminalResponse { .. } => {
-            println!("Transcription stream ended");
-        }
-        _ => {
-            // Catch any future StreamResponse variants
-            println!("Received response");
-        }
-    }
 }
 
 fn capture_audio_from_mic(
