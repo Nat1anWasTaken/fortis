@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         terminal.draw(|frame| render_ui(frame, &mut app, &state))?;
 
         // Poll for events with a short timeout
-        if let Ok(Some(event)) = poll_events(Duration::from_millis(50)) {
+        if let Ok(Some(event)) = poll_events(Duration::from_millis(16)) {
             if let Event::Key(key) = event {
                 app.handle_key_event(key, &mut state);
             }
@@ -89,9 +89,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if state.should_quit() {
             break;
         }
-
-        // Small sleep to prevent busy-waiting
-        tokio::time::sleep(Duration::from_millis(16)).await; // ~60 FPS
     }
 
     // Restore terminal

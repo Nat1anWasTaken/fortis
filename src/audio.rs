@@ -89,12 +89,13 @@ where
     T: cpal::Sample + Send + 'static,
 {
     let num_channels = config.channels as usize;
+    let channel_closed = Arc::new(AtomicBool::new(false));
 
     device.build_input_stream(
         config,
         move |data: &[T], _| {
-            // Skip processing if paused
-            if is_paused.load(Ordering::SeqCst) {
+            // Skip processing if paused or channel is closed
+            if is_paused.load(Ordering::SeqCst) || channel_closed.load(Ordering::SeqCst) {
                 return;
             }
 
@@ -120,12 +121,13 @@ where
                 }
             }
 
+            // If send fails, mark channel as closed and stop processing
             if tx.send(bytes).is_err() {
-                eprintln!("Audio channel closed; stopping capture");
+                channel_closed.store(true, Ordering::SeqCst);
             }
         },
-        move |err| {
-            eprintln!("Stream error: {err}");
+        move |_err| {
+            // Silently ignore stream errors to avoid spamming the terminal in TUI mode
         },
     )
 }

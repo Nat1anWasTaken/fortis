@@ -2,6 +2,7 @@ use std::error::Error;
 use std::time::Duration;
 
 use deepgram::Deepgram;
+use deepgram::common::options::DetectLanguage;
 use deepgram::common::options::Encoding;
 use deepgram::common::options::Options;
 use deepgram::common::stream_response::StreamResponse;
