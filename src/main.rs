@@ -9,6 +9,7 @@ use cpal::{Sample, SampleFormat, StreamConfig};
 use deepgram::Deepgram;
 use deepgram::common::options::Encoding;
 use deepgram::common::options::Options;
+use deepgram::common::stream_response::StreamResponse;
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::time;
 
@@ -85,7 +86,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             response = handle.receive() => {
                 match response {
-                    Some(Ok(result)) => println!("Transcription: {result:?}"),
+                    Some(Ok(result)) => {
+                        format_and_print_response(&result);
+                    }
                     Some(Err(err)) => {
                         eprintln!("Receive error: {err}");
                         break;
@@ -108,6 +111,62 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _ = audio_thread.join();
 
     Ok(())
+}
+
+fn format_and_print_response(response: &StreamResponse) {
+    match response {
+        StreamResponse::TranscriptResponse { channel, .. } => {
+            // Process each alternative (usually just one)
+            for alternative in &channel.alternatives {
+                // Build speaker-aware output from words
+                let mut current_speaker: Option<i32> = None;
+                let mut speaker_message = String::new();
+
+                for word in &alternative.words {
+                    // Check if speaker changed
+                    if word.speaker != current_speaker {
+                        // Print previous speaker's message if any
+                        if let Some(speaker_id) = current_speaker {
+                            println!("Speaker {}: {}", speaker_id, speaker_message.trim());
+                            speaker_message.clear();
+                        }
+                        current_speaker = word.speaker;
+                    }
+
+                    // Add word to current message
+                    if !speaker_message.is_empty() {
+                        speaker_message.push(' ');
+                    }
+                    speaker_message.push_str(&word.word);
+                }
+
+                // Print final speaker's message
+                if let Some(speaker_id) = current_speaker {
+                    println!("Speaker {}: {}", speaker_id, speaker_message.trim());
+                }
+
+                // If no speaker data, just print the transcript
+                if current_speaker.is_none() && !alternative.transcript.is_empty() {
+                    println!("{}", alternative.transcript);
+                }
+            }
+        }
+        StreamResponse::SpeechStartedResponse { .. } => {
+            // Optionally log speech detection
+            // println!("Speech detected");
+        }
+        StreamResponse::UtteranceEndResponse { .. } => {
+            // Optionally log utterance end
+            // println!("Utterance ended");
+        }
+        StreamResponse::TerminalResponse { .. } => {
+            println!("Transcription stream ended");
+        }
+        _ => {
+            // Catch any future StreamResponse variants
+            println!("Received response");
+        }
+    }
 }
 
 fn capture_audio_from_mic(
