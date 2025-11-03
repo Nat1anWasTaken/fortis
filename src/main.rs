@@ -4,6 +4,7 @@ use crossterm::event::{Event, EventStream};
 use dotenv::dotenv;
 use futures::StreamExt;
 use tokio::sync::mpsc;
+use tokio::time::{interval, Duration, MissedTickBehavior};
 
 mod audio;
 mod config;
@@ -77,6 +78,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut event_stream = EventStream::new();
     let mut needs_redraw = true;
 
+    // Create periodic tick for updating the UI (e.g., recording timer)
+    let mut tick = interval(Duration::from_millis(100));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
     loop {
         tokio::select! {
             biased;
@@ -120,6 +125,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
                 }
+            }
+            _ = tick.tick() => {
+                // Periodic tick to update the UI (e.g., recording timer)
+                needs_redraw = true;
             }
         }
 
