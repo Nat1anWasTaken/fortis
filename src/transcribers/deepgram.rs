@@ -32,6 +32,18 @@ impl DeepgramTranscriber {
         })
     }
 
+    /// Check if text contains CJK (Chinese/Japanese/Korean) characters
+    fn is_cjk(text: &str) -> bool {
+        text.chars().any(|c| {
+            matches!(c,
+                '\u{4E00}'..='\u{9FFF}' |  // CJK Unified Ideographs
+                '\u{3400}'..='\u{4DBF}' |  // CJK Extension A
+                '\u{3040}'..='\u{309F}' |  // Hiragana
+                '\u{30A0}'..='\u{30FF}'    // Katakana
+            )
+        })
+    }
+
     /// Format and parse a Deepgram response into transcription results
     fn format_response(response: &StreamResponse) -> Vec<TranscriptionResult> {
         let mut results = Vec::new();
@@ -43,6 +55,7 @@ impl DeepgramTranscriber {
                     // Build speaker-aware output from words
                     let mut current_speaker: Option<i32> = None;
                     let mut speaker_message = String::new();
+                    let mut last_was_cjk = false;
 
                     for word in &alternative.words {
                         // Check if speaker changed
@@ -54,15 +67,21 @@ impl DeepgramTranscriber {
                                     speaker_id: Some(speaker_id),
                                 });
                                 speaker_message.clear();
+                                last_was_cjk = false;
                             }
                             current_speaker = word.speaker;
                         }
 
                         // Add word to current message
-                        if !speaker_message.is_empty() {
+                        let current_is_cjk = Self::is_cjk(&word.word);
+
+                        // Add space only if message is not empty and at least one word is non-CJK
+                        if !speaker_message.is_empty() && !(last_was_cjk && current_is_cjk) {
                             speaker_message.push(' ');
                         }
+
                         speaker_message.push_str(&word.word);
+                        last_was_cjk = current_is_cjk;
                     }
 
                     // Save final speaker's message
