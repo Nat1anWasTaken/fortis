@@ -413,11 +413,13 @@ impl TranscriptionWidgetState {
         match &mut self.edit_mode {
             EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 buffer.insert(*cursor, c);
-                *cursor += 1;
+                // Move cursor by the byte length of the inserted character
+                *cursor += c.len_utf8();
             }
             EditMode::EditingMessage { buffer, cursor, .. } => {
                 buffer.insert(*cursor, c);
-                *cursor += 1;
+                // Move cursor by the byte length of the inserted character
+                *cursor += c.len_utf8();
             }
             EditMode::None => {}
         }
@@ -428,14 +430,24 @@ impl TranscriptionWidgetState {
         match &mut self.edit_mode {
             EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 if *cursor > 0 {
-                    *cursor -= 1;
-                    buffer.remove(*cursor);
+                    // Find the start of the previous character (UTF-8 safe)
+                    let mut new_cursor = *cursor - 1;
+                    while new_cursor > 0 && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    buffer.drain(new_cursor..*cursor);
+                    *cursor = new_cursor;
                 }
             }
             EditMode::EditingMessage { buffer, cursor, .. } => {
                 if *cursor > 0 {
-                    *cursor -= 1;
-                    buffer.remove(*cursor);
+                    // Find the start of the previous character (UTF-8 safe)
+                    let mut new_cursor = *cursor - 1;
+                    while new_cursor > 0 && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    buffer.drain(new_cursor..*cursor);
+                    *cursor = new_cursor;
                 }
             }
             EditMode::None => {}
@@ -445,9 +457,24 @@ impl TranscriptionWidgetState {
     /// Move cursor left during editing
     pub fn move_cursor_left(&mut self) {
         match &mut self.edit_mode {
-            EditMode::EditingSpeaker { cursor, .. } | EditMode::EditingMessage { cursor, .. } => {
+            EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 if *cursor > 0 {
-                    *cursor -= 1;
+                    // Move to the start of the previous character (UTF-8 safe)
+                    let mut new_cursor = *cursor - 1;
+                    while new_cursor > 0 && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    *cursor = new_cursor;
+                }
+            }
+            EditMode::EditingMessage { buffer, cursor, .. } => {
+                if *cursor > 0 {
+                    // Move to the start of the previous character (UTF-8 safe)
+                    let mut new_cursor = *cursor - 1;
+                    while new_cursor > 0 && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor -= 1;
+                    }
+                    *cursor = new_cursor;
                 }
             }
             EditMode::None => {}
@@ -459,12 +486,22 @@ impl TranscriptionWidgetState {
         match &mut self.edit_mode {
             EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 if *cursor < buffer.len() {
-                    *cursor += 1;
+                    // Move to the start of the next character (UTF-8 safe)
+                    let mut new_cursor = *cursor + 1;
+                    while new_cursor < buffer.len() && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor += 1;
+                    }
+                    *cursor = new_cursor;
                 }
             }
             EditMode::EditingMessage { buffer, cursor, .. } => {
                 if *cursor < buffer.len() {
-                    *cursor += 1;
+                    // Move to the start of the next character (UTF-8 safe)
+                    let mut new_cursor = *cursor + 1;
+                    while new_cursor < buffer.len() && !buffer.is_char_boundary(new_cursor) {
+                        new_cursor += 1;
+                    }
+                    *cursor = new_cursor;
                 }
             }
             EditMode::None => {}
