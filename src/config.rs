@@ -493,6 +493,42 @@ impl ConfigManager {
         self.set_select(key, &next_value)
     }
 
+    /// Update the available options for a select field at runtime.
+    pub fn update_select_options(
+        &mut self,
+        key: &str,
+        options: Vec<SelectOption>,
+        default: Option<String>,
+    ) -> Result<(), ConfigError> {
+        let default_ref = default.as_ref();
+        if !update_select_options_in_group(&mut self.root, key, &options, default_ref)? {
+            return Err(ConfigError::UnknownKey(key.to_string()));
+        }
+
+        self.index_schema();
+
+        if options.is_empty() {
+            self.values.remove(key);
+            return Ok(());
+        }
+
+        let stored_valid = self
+            .stored_value(key)
+            .and_then(JsonValue::as_str)
+            .map(|value| value.to_string())
+            .filter(|value| options.iter().any(|opt| opt.value == *value));
+
+        let effective_value = stored_valid
+            .or(default)
+            .or_else(|| options.first().map(|opt| opt.value.clone()))
+            .unwrap_or_default();
+
+        // Persist the effective value so the configuration remains valid.
+        // Ignore the returned flag since we don't care whether it changed.
+        let _ = self.set_select(key, &effective_value)?;
+        Ok(())
+    }
+
     /// Read text value for text fields.
     pub fn text_value(&self, key: &str) -> Result<String, ConfigError> {
         let entry = self.entry(key)?;
@@ -641,6 +677,54 @@ fn validate_value(entry: &ConfigEntry, value: &JsonValue) -> Option<JsonValue> {
     }
 }
 
+fn update_select_options_in_group(
+    group: &mut ConfigGroup,
+    key: &str,
+    options: &[SelectOption],
+    default: Option<&String>,
+) -> Result<bool, ConfigError> {
+    for child in &mut group.children {
+        match child {
+            ConfigNode::Group(child_group) => {
+                if update_select_options_in_group(child_group, key, options, default)? {
+                    return Ok(true);
+                }
+            }
+            ConfigNode::Entry(entry) => {
+                if entry.key == key {
+                    match &mut entry.field {
+                        ConfigField::Select {
+                            default: entry_default,
+                            options: entry_options,
+                        } => {
+                            *entry_options = options.to_vec();
+                            if let Some(default_value) = default {
+                                *entry_default = default_value.clone();
+                            } else if !entry_options
+                                .iter()
+                                .any(|opt| opt.value == *entry_default)
+                            {
+                                if let Some(first) = entry_options.first() {
+                                    *entry_default = first.value.clone();
+                                }
+                            }
+                            return Ok(true);
+                        }
+                        _ => {
+                            return Err(ConfigError::TypeMismatch {
+                                key: key.to_string(),
+                                expected: "select",
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(false)
+}
+
 fn clamp_number(field: &NumberField, value: f64) -> f64 {
     let mut result = value;
     if let Some(min) = field.min {
@@ -669,7 +753,42 @@ fn default_storage_path() -> PathBuf {
     }
 }
 
+fn audio_device_select_options() -> (String, Vec<SelectOption>) {
+    match crate::audio::list_audio_devices() {
+        Ok(devices) if !devices.is_empty() => {
+            let default = devices
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "".to_string());
+            let options = devices
+                .into_iter()
+                .map(|name| SelectOption::new(name.clone(), name))
+                .collect();
+            (default, options)
+        }
+        Ok(_) => {
+            let placeholder_value = "__no_devices__".to_string();
+            let options = vec![SelectOption::new(
+                placeholder_value.clone(),
+                "No input devices detected",
+            )];
+            (placeholder_value, options)
+        }
+        Err(err) => {
+            eprintln!("Warning: failed to enumerate audio devices: {err}");
+            let placeholder_value = "__no_devices__".to_string();
+            let options = vec![SelectOption::new(
+                placeholder_value.clone(),
+                "Audio device enumeration failed",
+            )];
+            (placeholder_value, options)
+        }
+    }
+}
+
 fn default_schema() -> ConfigGroup {
+    let (default_audio_device, audio_device_options) = audio_device_select_options();
+
     ConfigGroup::new("root", "Settings").with_children(vec![
         ConfigNode::Group(
             ConfigGroup::new("ui", "Interface")
@@ -762,18 +881,16 @@ fn default_schema() -> ConfigGroup {
                         ),
                         ConfigNode::Entry(
                             ConfigEntry::new(
-                                "audio.input.device_strategy",
-                                "Device Strategy",
+                                "audio.input.device",
+                                "Input Device",
                                 ConfigField::Select {
-                                    default: "system_default".into(),
-                                    options: vec![
-                                        SelectOption::new("system_default", "System Default"),
-                                        SelectOption::new("prefer_last_used", "Prefer Last Used"),
-                                        SelectOption::new("manual_only", "Manual Only"),
-                                    ],
+                                    default: default_audio_device,
+                                    options: audio_device_options,
                                 },
                             )
-                            .with_description("How Fortis selects an input device when starting."),
+                            .with_description(
+                                "Select the microphone or input device Fortis should use.",
+                            ),
                         ),
                     ]),
                 )]),

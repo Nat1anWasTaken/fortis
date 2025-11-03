@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use ratatui::style::Color;
 
-use crate::config::ConfigManager;
+use crate::config::{ConfigField, ConfigManager, SelectOption};
 
 /// Recording state
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,9 +44,9 @@ struct RecordingSession {
 
 impl AppState {
     pub fn new() -> Self {
-        // Get initial device name (one-time cost at startup)
-        let current_device_name =
-            crate::audio::get_device_name(0).unwrap_or_else(|_| "Unknown Device".to_string());
+        let mut config = ConfigManager::with_default_schema();
+        let (current_device_index, current_device_name) =
+            Self::resolve_audio_device(&mut config);
 
         Self {
             should_quit: Arc::new(AtomicBool::new(false)),
@@ -56,10 +56,10 @@ impl AppState {
                 elapsed_recording_time: Duration::ZERO,
                 last_pause_time: None,
             },
-            current_device_index: 0,
+            current_device_index,
             current_device_name,
             speaker_map: HashMap::new(),
-            config: ConfigManager::with_default_schema(),
+            config,
         }
     }
 
@@ -150,6 +150,15 @@ impl AppState {
         // Update cached device name
         self.current_device_name =
             crate::audio::get_device_name(index).unwrap_or_else(|_| "Unknown Device".to_string());
+        if let Err(err) = self
+            .config
+            .set_select("audio.input.device", &self.current_device_name)
+        {
+            eprintln!(
+                "Warning: failed to persist selected audio device '{}': {err}",
+                self.current_device_name
+            );
+        }
     }
 
     /// Get the display name for a speaker ID
@@ -240,5 +249,112 @@ impl AppState {
         self.config
             .select_value("transcriber.deepgram.language")
             .unwrap_or_else(|_| "en-US".to_string())
+    }
+
+    /// Synchronize the active audio device with the persisted configuration.
+    pub fn sync_audio_device_from_config(&mut self) {
+        let (index, name) = Self::resolve_audio_device(&mut self.config);
+        self.current_device_index = index;
+        self.current_device_name = name;
+    }
+
+    fn resolve_audio_device(config: &mut ConfigManager) -> (usize, String) {
+        const DEVICE_KEY: &str = "audio.input.device";
+
+        match crate::audio::list_audio_devices() {
+            Ok(devices) => {
+                if devices.is_empty() {
+                    let placeholder_value = "__no_devices__".to_string();
+                    let options = vec![SelectOption::new(
+                        placeholder_value.clone(),
+                        "No input devices detected",
+                    )];
+                    if let Err(err) = config.update_select_options(DEVICE_KEY, options, Some(placeholder_value)) {
+                        eprintln!(
+                            "Warning: failed to refresh audio device options after empty enumeration: {err}"
+                        );
+                    }
+                    return (0, "Unknown Device".to_string());
+                }
+
+                let new_options: Vec<SelectOption> = devices
+                    .iter()
+                    .map(|name| SelectOption::new(name.clone(), name.clone()))
+                    .collect();
+                let default_candidate = new_options.first().map(|opt| opt.value.clone());
+
+                let needs_option_refresh = config
+                    .entry(DEVICE_KEY)
+                    .ok()
+                    .map(|entry| match &entry.field {
+                        ConfigField::Select { default, options } => {
+                            if options.len() != new_options.len() {
+                                return true;
+                            }
+                            if options
+                                .iter()
+                                .zip(new_options.iter())
+                                .any(|(existing, updated)| {
+                                    existing.value != updated.value || existing.label != updated.label
+                                })
+                            {
+                                return true;
+                            }
+                            if let Some(default_value) = &default_candidate {
+                                default_value != default
+                            } else {
+                                false
+                            }
+                        }
+                        _ => true,
+                    })
+                    .unwrap_or(true);
+
+                if needs_option_refresh {
+                    if let Err(err) = config.update_select_options(
+                        DEVICE_KEY,
+                        new_options.clone(),
+                        default_candidate.clone(),
+                    ) {
+                        eprintln!(
+                            "Warning: failed to refresh audio device options: {err}"
+                        );
+                    }
+                }
+
+                let desired = config
+                    .select_value(DEVICE_KEY)
+                    .unwrap_or_else(|_| default_candidate.clone().unwrap_or_else(|| devices[0].clone()));
+
+                if let Some(index) = devices.iter().position(|name| name == &desired) {
+                    (index, desired)
+                } else {
+                    let fallback = devices[0].clone();
+                    if let Err(err) = config.set_select(DEVICE_KEY, &fallback) {
+                        eprintln!(
+                            "Warning: failed to reset audio device selection to '{}': {err}",
+                            fallback
+                        );
+                    }
+                    (0, fallback)
+                }
+            }
+            Err(err) => {
+                eprintln!("Warning: failed to enumerate audio devices: {err}");
+                let placeholder_value = "__no_devices__".to_string();
+                let options = vec![SelectOption::new(
+                    placeholder_value.clone(),
+                    "Audio device enumeration failed",
+                )];
+                if let Err(update_err) =
+                    config.update_select_options(DEVICE_KEY, options, Some(placeholder_value))
+                {
+                    eprintln!(
+                        "Warning: failed to refresh audio device options after enumeration error: {update_err}"
+                    );
+                }
+                (0, "Unknown Device".to_string())
+            }
+        }
     }
 }

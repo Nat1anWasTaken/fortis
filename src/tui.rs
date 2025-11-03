@@ -108,6 +108,7 @@ impl App {
             let result = dialog_state.handle_key_event(key, state.config_mut());
             if result.handled {
                 if result.value_changed {
+                    state.sync_audio_device_from_config();
                     self.refresh_from_config(state);
                 }
                 if result.close {

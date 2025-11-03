@@ -48,10 +48,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let should_stop_audio = state.quit_handle();
     let is_paused_audio = state.pause_handle();
 
-    // Spawn audio capture thread using default device (0)
+    // Spawn audio capture thread using the configured device
+    let selected_device_index = state.current_device_index();
     let audio_thread = std::thread::spawn(move || {
         if let Err(err) =
-            capture_audio_from_mic_with_device(0, audio_tx, should_stop_audio, is_paused_audio)
+            capture_audio_from_mic_with_device(
+                selected_device_index,
+                audio_tx,
+                should_stop_audio,
+                is_paused_audio,
+            )
         {
             eprintln!("Failed to capture audio: {err}");
         }
