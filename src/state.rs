@@ -38,6 +38,8 @@ pub struct AppState {
     current_transcriber_model: String,
     /// Tracks whether the transcriber needs to restart with new settings
     transcriber_restart_needed: bool,
+    /// Current audio level (0.0 to 1.0) for sound meter display
+    audio_level: f32,
 }
 
 /// Recording session tracking
@@ -78,6 +80,7 @@ impl AppState {
             current_transcriber_language,
             current_transcriber_model,
             transcriber_restart_needed: false,
+            audio_level: 0.0,
         }
     }
 
@@ -315,6 +318,16 @@ impl AppState {
             self.transcriber_restart_needed = false;
         }
         restart
+    }
+
+    /// Get current audio level (0.0 to 1.0)
+    pub fn audio_level(&self) -> f32 {
+        self.audio_level
+    }
+
+    /// Update audio level (0.0 to 1.0)
+    pub fn set_audio_level(&mut self, level: f32) {
+        self.audio_level = level.clamp(0.0, 1.0);
     }
 
     fn resolve_audio_device(config: &mut ConfigManager) -> (usize, String) {

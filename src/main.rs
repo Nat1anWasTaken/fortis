@@ -33,6 +33,7 @@ impl AudioCaptureWorker {
         sender: mpsc::UnboundedSender<Vec<u8>>,
         quit_signal: Arc<AtomicBool>,
         pause_signal: Arc<AtomicBool>,
+        level_sender: Option<mpsc::UnboundedSender<f32>>,
     ) -> Self {
         let worker_stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&worker_stop);
@@ -40,7 +41,7 @@ impl AudioCaptureWorker {
         let pause = Arc::clone(&pause_signal);
         let handle = std::thread::spawn(move || {
             if let Err(err) =
-                capture_audio_from_mic_with_device(device_index, sender, quit, pause, thread_stop)
+                capture_audio_from_mic_with_device(device_index, sender, quit, pause, thread_stop, level_sender)
             {
                 eprintln!("Failed to capture audio: {err}");
             }
@@ -58,9 +59,10 @@ impl AudioCaptureWorker {
         sender: mpsc::UnboundedSender<Vec<u8>>,
         quit_signal: Arc<AtomicBool>,
         pause_signal: Arc<AtomicBool>,
+        level_sender: Option<mpsc::UnboundedSender<f32>>,
     ) {
         self.stop();
-        *self = Self::spawn(device_index, sender, quit_signal, pause_signal);
+        *self = Self::spawn(device_index, sender, quit_signal, pause_signal, level_sender);
     }
 
     fn stop(&mut self) {
@@ -106,12 +108,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create channels for audio and transcription results
     let (mut audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+    let (level_tx, mut level_rx) = mpsc::unbounded_channel();
 
     let mut audio_worker = AudioCaptureWorker::spawn(
         state.current_device_index(),
         audio_tx.clone(),
         state.quit_handle(),
         state.pause_handle(),
+        Some(level_tx.clone()),
     );
 
     // Create and initialize initial transcriber
@@ -152,6 +156,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     None => break,
                 }
             }
+            maybe_level = level_rx.recv() => {
+                if let Some(level) = maybe_level {
+                    state.set_audio_level(level);
+                    needs_redraw = true;
+                }
+            }
             maybe_result = result_rx.recv() => {
                 if let Some(transcript_result) = maybe_result {
                     let transcript = transcript_result.transcript;
@@ -188,6 +198,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 audio_tx.clone(),
                 state.quit_handle(),
                 state.pause_handle(),
+                Some(level_tx.clone()),
             );
         }
 
@@ -209,6 +220,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 audio_tx.clone(),
                 state.quit_handle(),
                 state.pause_handle(),
+                Some(level_tx.clone()),
             );
 
             // Create and initialize new transcriber

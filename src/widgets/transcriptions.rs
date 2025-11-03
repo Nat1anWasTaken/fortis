@@ -638,6 +638,7 @@ impl TranscriptionWidget {
                 .borders(Borders::ALL)
                 .title(build_title(app_state))
                 .title_top(build_device_title(app_state).right_aligned())
+                .title_bottom(build_sound_meter(app_state))
                 .border_type(BorderType::Rounded),
         );
         // Note: Wrapping disabled for performance (was taking 80ms+)
@@ -664,4 +665,37 @@ fn build_device_title(app_state: &AppState) -> Line<'_> {
     let device_name = app_state.current_device_name();
     let device_title = format!(" 🎤 {} (D: Change) ", device_name);
     Line::from(Span::styled(device_title, Style::default().fg(Color::Cyan)))
+}
+
+fn build_sound_meter(app_state: &AppState) -> Line<'_> {
+    let level = app_state.audio_level();
+
+    // Create a simple bar meter with 20 segments
+    const METER_WIDTH: usize = 20;
+    let filled = (level * METER_WIDTH as f32) as usize;
+    let filled = filled.min(METER_WIDTH);
+
+    let mut bar = String::with_capacity(METER_WIDTH + 10);
+    bar.push_str(" Level: ");
+
+    // Build the bar with filled and empty segments
+    for i in 0..METER_WIDTH {
+        if i < filled {
+            bar.push('━');
+        } else {
+            bar.push('─');
+        }
+    }
+    bar.push(' ');
+
+    // Color based on level (green -> yellow -> red)
+    let color = if level < 0.5 {
+        Color::Green
+    } else if level < 0.8 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+
+    Line::from(Span::styled(bar, Style::default().fg(color)))
 }

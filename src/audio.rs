@@ -58,6 +58,7 @@ pub fn capture_audio_from_mic_with_device(
     should_stop: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
     worker_stop: Arc<AtomicBool>,
+    level_tx: Option<UnboundedSender<f32>>,
 ) -> Result<(), Box<dyn Error>> {
     let device = get_device_by_index(device_index)?;
 
@@ -68,13 +69,13 @@ pub fn capture_audio_from_mic_with_device(
 
     let stream = match sample_format {
         SampleFormat::F32 => {
-            build_input_stream::<f32>(&device, &stream_config, tx.clone(), is_paused.clone())?
+            build_input_stream::<f32>(&device, &stream_config, tx.clone(), is_paused.clone(), level_tx.clone())?
         }
         SampleFormat::I16 => {
-            build_input_stream::<i16>(&device, &stream_config, tx.clone(), is_paused.clone())?
+            build_input_stream::<i16>(&device, &stream_config, tx.clone(), is_paused.clone(), level_tx.clone())?
         }
         SampleFormat::U16 => {
-            build_input_stream::<u16>(&device, &stream_config, tx.clone(), is_paused.clone())?
+            build_input_stream::<u16>(&device, &stream_config, tx.clone(), is_paused.clone(), level_tx.clone())?
         }
     };
 
@@ -93,6 +94,7 @@ fn build_input_stream<T>(
     config: &StreamConfig,
     tx: UnboundedSender<Vec<u8>>,
     is_paused: Arc<AtomicBool>,
+    level_tx: Option<UnboundedSender<f32>>,
 ) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: cpal::Sample + Send + 'static,
@@ -109,6 +111,8 @@ where
             }
 
             let mut bytes = Vec::new();
+            let mut sum_squares = 0.0f32;
+            let mut sample_count = 0;
 
             if num_channels == 2 {
                 // Stereo to mono conversion by averaging channels
@@ -119,6 +123,10 @@ where
                         let avg = (left_f32 + right_f32) / 2.0;
                         let sample = (avg.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                         bytes.extend_from_slice(&sample.to_le_bytes());
+
+                        // Calculate RMS for level meter
+                        sum_squares += avg * avg;
+                        sample_count += 1;
                     }
                 }
             } else {
@@ -127,6 +135,20 @@ where
                     let sample_f32 = sample.to_f32();
                     let sample_i16 = (sample_f32.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
                     bytes.extend_from_slice(&sample_i16.to_le_bytes());
+
+                    // Calculate RMS for level meter
+                    sum_squares += sample_f32 * sample_f32;
+                    sample_count += 1;
+                }
+            }
+
+            // Calculate and send RMS level
+            if let Some(ref level_sender) = level_tx {
+                if sample_count > 0 {
+                    let rms = (sum_squares / sample_count as f32).sqrt();
+                    // Convert to 0.0-1.0 range (RMS is typically 0.0-0.7 for normal speech)
+                    let level = (rms * 1.5).min(1.0);
+                    let _ = level_sender.send(level);
                 }
             }
 
