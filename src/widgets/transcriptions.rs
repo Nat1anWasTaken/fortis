@@ -61,19 +61,30 @@ pub struct TranscriptionWidgetState {
     viewport_height: usize,
     /// Current edit mode state
     edit_mode: EditMode,
+    /// Whether new messages should auto-scroll into view
+    auto_scroll_enabled: bool,
 }
 
 impl TranscriptionWidgetState {
     /// Maximum number of messages retained in memory to keep rendering cheap
     const MAX_TRANSCRIPTIONS: usize = 2_000;
 
-    pub fn new() -> Self {
+    pub fn new(auto_scroll_enabled: bool) -> Self {
         Self {
             transcriptions: VecDeque::new(),
             scroll_position: 0,
             focus: None,
             viewport_height: 0,
             edit_mode: EditMode::None,
+            auto_scroll_enabled,
+        }
+    }
+
+    /// Enable or disable automatic scrolling when new messages arrive.
+    pub fn set_auto_scroll(&mut self, enabled: bool) {
+        self.auto_scroll_enabled = enabled;
+        if enabled {
+            self.ensure_focus_visible();
         }
     }
 
@@ -88,7 +99,11 @@ impl TranscriptionWidgetState {
         self.transcriptions.push_back(message);
 
         self.ensure_focus_valid();
-        self.ensure_focus_visible();
+        if self.auto_scroll_enabled {
+            self.ensure_focus_visible();
+        } else {
+            self.clamp_scroll();
+        }
     }
 
     /// Move focus to the previous message row
@@ -396,15 +411,11 @@ impl TranscriptionWidgetState {
     /// Handle a character input during editing
     pub fn handle_char_input(&mut self, c: char) {
         match &mut self.edit_mode {
-            EditMode::EditingSpeaker {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 buffer.insert(*cursor, c);
                 *cursor += 1;
             }
-            EditMode::EditingMessage {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingMessage { buffer, cursor, .. } => {
                 buffer.insert(*cursor, c);
                 *cursor += 1;
             }
@@ -415,17 +426,13 @@ impl TranscriptionWidgetState {
     /// Handle backspace during editing
     pub fn handle_backspace(&mut self) {
         match &mut self.edit_mode {
-            EditMode::EditingSpeaker {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 if *cursor > 0 {
                     *cursor -= 1;
                     buffer.remove(*cursor);
                 }
             }
-            EditMode::EditingMessage {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingMessage { buffer, cursor, .. } => {
                 if *cursor > 0 {
                     *cursor -= 1;
                     buffer.remove(*cursor);
@@ -450,16 +457,12 @@ impl TranscriptionWidgetState {
     /// Move cursor right during editing
     pub fn move_cursor_right(&mut self) {
         match &mut self.edit_mode {
-            EditMode::EditingSpeaker {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingSpeaker { buffer, cursor, .. } => {
                 if *cursor < buffer.len() {
                     *cursor += 1;
                 }
             }
-            EditMode::EditingMessage {
-                buffer, cursor, ..
-            } => {
+            EditMode::EditingMessage { buffer, cursor, .. } => {
                 if *cursor < buffer.len() {
                     *cursor += 1;
                 }
@@ -471,12 +474,8 @@ impl TranscriptionWidgetState {
     /// Get the current edit buffer and cursor for rendering
     pub fn get_edit_state(&self) -> Option<(&str, usize, bool)> {
         match &self.edit_mode {
-            EditMode::EditingSpeaker {
-                buffer, cursor, ..
-            } => Some((buffer, *cursor, true)),
-            EditMode::EditingMessage {
-                buffer, cursor, ..
-            } => Some((buffer, *cursor, false)),
+            EditMode::EditingSpeaker { buffer, cursor, .. } => Some((buffer, *cursor, true)),
+            EditMode::EditingMessage { buffer, cursor, .. } => Some((buffer, *cursor, false)),
             EditMode::None => None,
         }
     }
@@ -511,7 +510,7 @@ impl TranscriptionWidget {
             let start_index = end_index.saturating_sub(visible_lines);
 
             let focused = state.focus;
-            let highlight_style = Style::default().fg(Color::Yellow);
+            let highlight_style = Style::default().fg(app_state.accent_color());
             let edit_style = Style::default().fg(Color::Green);
             let speaker_style = Style::default().fg(Color::LightCyan);
             let message_style = Style::default();
@@ -548,20 +547,31 @@ impl TranscriptionWidget {
                                 if !before.is_empty() {
                                     spans.push(Span::styled(before, edit_style));
                                 }
-                                spans.push(Span::styled("█", edit_style.add_modifier(Modifier::REVERSED)));
+                                spans.push(Span::styled(
+                                    "█",
+                                    edit_style.add_modifier(Modifier::REVERSED),
+                                ));
                                 if !after.is_empty() {
                                     spans.push(Span::styled(after, edit_style));
                                 }
                                 spans.push(Span::raw("]: "));
                             } else {
                                 // Normal display with focus highlight
-                                let style = if is_focused { highlight_style } else { speaker_style };
+                                let style = if is_focused {
+                                    highlight_style
+                                } else {
+                                    speaker_style
+                                };
                                 let speaker_text = format!("[{}]: ", speaker);
                                 spans.push(Span::styled(speaker_text, style));
                             }
                         } else {
                             // Normal display with focus highlight
-                            let style = if is_focused { highlight_style } else { speaker_style };
+                            let style = if is_focused {
+                                highlight_style
+                            } else {
+                                speaker_style
+                            };
                             let speaker_text = format!("[{}]: ", speaker);
                             spans.push(Span::styled(speaker_text, style));
                         }
@@ -590,18 +600,29 @@ impl TranscriptionWidget {
                             if !before.is_empty() {
                                 spans.push(Span::styled(before, edit_style));
                             }
-                            spans.push(Span::styled("█", edit_style.add_modifier(Modifier::REVERSED)));
+                            spans.push(Span::styled(
+                                "█",
+                                edit_style.add_modifier(Modifier::REVERSED),
+                            ));
                             if !after.is_empty() {
                                 spans.push(Span::styled(after, edit_style));
                             }
                         } else {
                             // Normal display with focus highlight
-                            let style = if is_focused { highlight_style } else { message_style };
+                            let style = if is_focused {
+                                highlight_style
+                            } else {
+                                message_style
+                            };
                             spans.push(Span::styled(message.content.as_str(), style));
                         }
                     } else {
                         // Normal display with focus highlight
-                        let style = if is_focused { highlight_style } else { message_style };
+                        let style = if is_focused {
+                            highlight_style
+                        } else {
+                            message_style
+                        };
                         spans.push(Span::styled(message.content.as_str(), style));
                     }
 
@@ -612,15 +633,14 @@ impl TranscriptionWidget {
             lines
         };
 
-        let paragraph = Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(build_title(app_state))
-                    .title_top(build_device_title(app_state).right_aligned())
-                    .border_type(BorderType::Rounded),
-            );
-            // Note: Wrapping disabled for performance (was taking 80ms+)
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(build_title(app_state))
+                .title_top(build_device_title(app_state).right_aligned())
+                .border_type(BorderType::Rounded),
+        );
+        // Note: Wrapping disabled for performance (was taking 80ms+)
 
         frame.render_widget(paragraph, area);
     }

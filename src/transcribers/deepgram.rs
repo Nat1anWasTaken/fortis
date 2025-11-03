@@ -1,8 +1,7 @@
 use std::error::Error;
 use std::time::Duration;
 
-use deepgram::common::options::Encoding;
-use deepgram::common::options::Options;
+use deepgram::common::options::{Encoding, Language, Options};
 use deepgram::common::stream_response::StreamResponse;
 use deepgram::Deepgram;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -15,17 +14,19 @@ pub struct DeepgramTranscriber {
     client: Deepgram,
     sample_rate: u32,
     channels: u16,
+    language: Option<Language>,
 }
 
 impl DeepgramTranscriber {
     /// Create a new Deepgram transcriber instance
-    pub fn new(api_key: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn new(api_key: &str, language_code: &str) -> Result<Self, Box<dyn Error>> {
         let client = Deepgram::new(api_key)?;
 
         Ok(Self {
             client,
             sample_rate: 0,
             channels: 0,
+            language: parse_language_code(language_code),
         })
     }
 
@@ -117,10 +118,15 @@ impl AudioTranscriber for DeepgramTranscriber {
         mut audio_receiver: UnboundedReceiver<Vec<u8>>,
         result_sender: UnboundedSender<TranscriptionResult>,
     ) -> Result<(), Box<dyn Error>> {
-        let options = Options::builder()
+        let mut builder = Options::builder()
             .encoding(Encoding::Linear16)
-            .diarize(true)
-            .build();
+            .diarize(true);
+
+        if let Some(language) = self.language.clone() {
+            builder = builder.language(language);
+        }
+
+        let options = builder.build();
 
         let mut handle = self
             .client
@@ -182,5 +188,23 @@ impl AudioTranscriber for DeepgramTranscriber {
 
         handle.close_stream().await?;
         Ok(())
+    }
+}
+
+fn parse_language_code(code: &str) -> Option<Language> {
+    match code {
+        "en-US" | "en_us" | "enUS" => Some(Language::en_US),
+        "en-GB" | "en_gb" | "enGB" => Some(Language::en_GB),
+        "en" => Some(Language::en),
+        "es" => Some(Language::es),
+        "es-LATAM" | "es_latam" | "esLATAM" => Some(Language::es_LATAM),
+        "fr" => Some(Language::fr),
+        "de" => Some(Language::de),
+        "it" => Some(Language::it),
+        "pt-BR" | "pt_br" | "ptBR" => Some(Language::pt_BR),
+        "hi" => Some(Language::hi),
+        "ja" => Some(Language::ja),
+        "ko" => Some(Language::ko),
+        _ => None,
     }
 }

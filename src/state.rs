@@ -3,6 +3,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use ratatui::style::Color;
+
+use crate::config::ConfigManager;
+
 /// Recording state
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RecordingState {
@@ -24,6 +28,8 @@ pub struct AppState {
     current_device_name: String,
     /// Speaker ID to custom name mapping
     speaker_map: HashMap<i32, String>,
+    /// Application configuration manager
+    config: ConfigManager,
 }
 
 /// Recording session tracking
@@ -39,8 +45,8 @@ struct RecordingSession {
 impl AppState {
     pub fn new() -> Self {
         // Get initial device name (one-time cost at startup)
-        let current_device_name = crate::audio::get_device_name(0)
-            .unwrap_or_else(|_| "Unknown Device".to_string());
+        let current_device_name =
+            crate::audio::get_device_name(0).unwrap_or_else(|_| "Unknown Device".to_string());
 
         Self {
             should_quit: Arc::new(AtomicBool::new(false)),
@@ -53,6 +59,7 @@ impl AppState {
             current_device_index: 0,
             current_device_name,
             speaker_map: HashMap::new(),
+            config: ConfigManager::with_default_schema(),
         }
     }
 
@@ -141,8 +148,8 @@ impl AppState {
     pub fn set_device_index(&mut self, index: usize) {
         self.current_device_index = index;
         // Update cached device name
-        self.current_device_name = crate::audio::get_device_name(index)
-            .unwrap_or_else(|_| "Unknown Device".to_string());
+        self.current_device_name =
+            crate::audio::get_device_name(index).unwrap_or_else(|_| "Unknown Device".to_string());
     }
 
     /// Get the display name for a speaker ID
@@ -161,5 +168,77 @@ impl AppState {
     /// Check if a speaker has a custom name
     pub fn has_custom_name(&self, speaker_id: i32) -> bool {
         self.speaker_map.contains_key(&speaker_id)
+    }
+
+    /// Access configuration manager (immutable)
+    pub fn config(&self) -> &ConfigManager {
+        &self.config
+    }
+
+    /// Access configuration manager (mutable)
+    pub fn config_mut(&mut self) -> &mut ConfigManager {
+        &mut self.config
+    }
+
+    /// Determine if the UI should auto-scroll when new transcripts arrive.
+    pub fn auto_scroll_enabled(&self) -> bool {
+        self.config
+            .bool_value("ui.behavior.auto_scroll")
+            .unwrap_or(true)
+    }
+
+    /// Whether the compact layout option is enabled.
+    pub fn compact_mode(&self) -> bool {
+        self.config
+            .bool_value("ui.behavior.compact_mode")
+            .unwrap_or(false)
+    }
+
+    /// Current accent color, adjusted by the configured brightness multiplier.
+    pub fn accent_color(&self) -> Color {
+        let base = self
+            .config
+            .select_value("ui.theme.accent_color")
+            .unwrap_or_else(|_| "blue".to_string());
+        let brightness = self
+            .config
+            .number_value("ui.theme.brightness")
+            .unwrap_or(1.0);
+
+        let (r, g, b) = match base.as_str() {
+            "cyan" => (0, 188, 242),
+            "magenta" => (216, 46, 154),
+            "amber" => (255, 179, 71),
+            "green" => (0, 200, 117),
+            _ => (59, 130, 246), // blue
+        };
+
+        let adjust = |component: u8| -> u8 {
+            ((component as f64 * brightness).clamp(0.0, 255.0)).round() as u8
+        };
+
+        Color::Rgb(adjust(r), adjust(g), adjust(b))
+    }
+
+    /// Optional Deepgram API key stored in configuration.
+    pub fn deepgram_api_key(&self) -> Option<String> {
+        self.config
+            .text_value("transcriber.deepgram.api_key")
+            .ok()
+            .and_then(|value| {
+                let trimmed = value.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            })
+    }
+
+    /// Configured Deepgram language code (defaults to en-US).
+    pub fn deepgram_language(&self) -> String {
+        self.config
+            .select_value("transcriber.deepgram.language")
+            .unwrap_or_else(|_| "en-US".to_string())
     }
 }

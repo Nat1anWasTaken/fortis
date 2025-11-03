@@ -40,7 +40,15 @@ impl DeviceDialogState {
 }
 
 /// Device selection dialog widget
-pub struct DeviceDialog;
+pub struct DeviceDialog {
+    accent: Color,
+}
+
+impl DeviceDialog {
+    pub fn new(accent: Color) -> Self {
+        Self { accent }
+    }
+}
 
 impl StatefulWidget for DeviceDialog {
     type State = DeviceDialogState;
@@ -77,9 +85,12 @@ impl StatefulWidget for DeviceDialog {
                 };
                 let content = format!("{}{}", prefix, device);
                 let style = if i == state.selected_index {
-                    Style::default().bg(Color::Blue).fg(Color::White)
+                    Style::default()
+                        .bg(self.accent)
+                        .fg(Color::Black)
+                        .add_modifier(Modifier::BOLD)
                 } else if i == state.current_device_index {
-                    Style::default().fg(Color::Green)
+                    Style::default().fg(self.accent)
                 } else {
                     Style::default()
                 };
@@ -92,7 +103,8 @@ impl StatefulWidget for DeviceDialog {
                 .borders(Borders::ALL)
                 .title(" Select Audio Device ")
                 .title_alignment(Alignment::Left)
-                .border_type(BorderType::Rounded),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(self.accent)),
         );
 
         Widget::render(list, dialog_area, buf);

@@ -8,6 +8,11 @@
 - Always run `cargo check` to verify compilation before ending work on Rust code
 - Do not consider a task complete without running `cargo check` successfully
 
+## Transcriber Settings
+- Deepgram configuration (API key, language) is stored in `settings.json` via the settings dialog
+- The saved API key overrides the `DEEPGRAM_API_KEY` environment variable when present
+- Update provider options through the in-app settings dialog (press `S`) instead of hardcoding values
+
 ## Module Organization
 - Prefer modern module definitions over legacy `mod.rs` files
 - Modern approach: Create a `.rs` file with the same name as the module in the parent directory

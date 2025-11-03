@@ -8,8 +8,8 @@ use std::io::{self, stdout};
 
 use crate::state::AppState;
 use crate::widgets::{
-    DeviceDialog, DeviceDialogState, FooterWidget, TranscriptionMessage, TranscriptionWidget,
-    TranscriptionWidgetState,
+    DeviceDialog, DeviceDialogState, FooterWidget, SettingsDialog, SettingsDialogState,
+    TranscriptionMessage, TranscriptionWidget, TranscriptionWidgetState,
 };
 
 /// Application UI state for the TUI
@@ -18,14 +18,24 @@ pub struct App {
     pub transcription_state: TranscriptionWidgetState,
     /// Device selection dialog state (None when closed)
     pub device_dialog_state: Option<DeviceDialogState>,
+    /// Settings dialog state (None when closed)
+    pub settings_dialog_state: Option<SettingsDialogState>,
 }
 
 impl App {
-    pub fn new() -> Self {
-        Self {
-            transcription_state: TranscriptionWidgetState::new(),
+    pub fn new(state: &AppState) -> Self {
+        let mut app = Self {
+            transcription_state: TranscriptionWidgetState::new(state.auto_scroll_enabled()),
             device_dialog_state: None,
-        }
+            settings_dialog_state: None,
+        };
+        app.refresh_from_config(state);
+        app
+    }
+
+    fn refresh_from_config(&mut self, state: &AppState) {
+        self.transcription_state
+            .set_auto_scroll(state.auto_scroll_enabled());
     }
 
     /// Add a new transcription message
@@ -66,10 +76,45 @@ impl App {
         self.device_dialog_state = None;
     }
 
+    /// Open the settings dialog
+    pub fn open_settings_dialog(&mut self, state: &AppState) {
+        self.settings_dialog_state = Some(SettingsDialogState::new(state.config()));
+        // Ensure no other modal remains open
+        self.device_dialog_state = None;
+    }
+
+    /// Close the settings dialog
+    pub fn close_settings_dialog(&mut self) {
+        self.settings_dialog_state = None;
+    }
+
+    /// Toggle settings dialog visibility
+    pub fn toggle_settings_dialog(&mut self, state: &AppState) {
+        if self.settings_dialog_state.is_some() {
+            self.close_settings_dialog();
+        } else {
+            self.open_settings_dialog(state);
+        }
+    }
+
     /// Handle keyboard input
     pub fn handle_key_event(&mut self, key: event::KeyEvent, state: &mut AppState) -> bool {
         if key.kind != KeyEventKind::Press {
             return false;
+        }
+
+        // Handle settings dialog input if open
+        if let Some(dialog_state) = &mut self.settings_dialog_state {
+            let result = dialog_state.handle_key_event(key, state.config_mut());
+            if result.handled {
+                if result.value_changed {
+                    self.refresh_from_config(state);
+                }
+                if result.close {
+                    self.close_settings_dialog();
+                }
+                return true;
+            }
         }
 
         // Handle device dialog input separately
@@ -145,6 +190,10 @@ impl App {
                 self.open_device_dialog(state.current_device_index());
                 true
             }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.toggle_settings_dialog(state);
+                true
+            }
             KeyCode::Enter => {
                 self.transcription_state.start_editing();
                 true
@@ -190,8 +239,8 @@ pub fn render_ui(frame: &mut Frame, app: &mut App, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // Main content
-            Constraint::Length(3), // Footer
+            Constraint::Min(1),                                           // Main content
+            Constraint::Length(if state.compact_mode() { 2 } else { 3 }), // Footer
         ])
         .split(frame.area());
 
@@ -199,10 +248,25 @@ pub fn render_ui(frame: &mut Frame, app: &mut App, state: &AppState) {
     TranscriptionWidget::render(frame, &mut app.transcription_state, state, chunks[0]);
 
     // Render footer widget
-    FooterWidget::render(frame, chunks[1]);
+    FooterWidget::render(frame, chunks[1], state.accent_color(), state.compact_mode());
 
     // Render device selection dialog if open
     if let Some(dialog_state) = &mut app.device_dialog_state {
-        frame.render_stateful_widget(DeviceDialog, frame.area(), dialog_state);
+        frame.render_stateful_widget(
+            DeviceDialog::new(state.accent_color()),
+            frame.area(),
+            dialog_state,
+        );
+    }
+
+    if let Some(settings_state) = &mut app.settings_dialog_state {
+        frame.render_stateful_widget(
+            SettingsDialog {
+                manager: state.config(),
+                accent: state.accent_color(),
+            },
+            frame.area(),
+            settings_state,
+        );
     }
 }

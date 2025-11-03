@@ -6,6 +6,7 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 
 mod audio;
+mod config;
 mod state;
 mod transcribers;
 mod tui;
@@ -26,14 +27,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Initialize TUI
     let mut terminal = init_terminal()?;
-    let mut app = App::new();
+    let mut app = App::new(&state);
 
-    // Load API key from environment
-    let api_key =
-        std::env::var("DEEPGRAM_API_KEY").unwrap_or_else(|_| "YOUR_DEEPGRAM_API_KEY".to_string());
+    // Resolve Deepgram credentials and preferences (config overrides environment)
+    let api_key = state
+        .deepgram_api_key()
+        .or_else(|| std::env::var("DEEPGRAM_API_KEY").ok())
+        .unwrap_or_else(|| "YOUR_DEEPGRAM_API_KEY".to_string());
+    let language = state.deepgram_language();
 
     // Create transcriber based on configuration
-    let config = TranscriberConfig::Deepgram { api_key };
+    let config = TranscriberConfig::Deepgram { api_key, language };
     let mut transcriber = create_transcriber(config)?;
 
     // Create channels for audio and transcription results
