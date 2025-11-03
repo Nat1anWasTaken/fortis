@@ -8,14 +8,25 @@ Real-time audio transcription in your terminal using Deepgram AI.
 - Deepgram API key ([get one here](https://deepgram.com))
 - Audio input device (microphone)
 
-## Setup
+## Installation
 
-Run the application:
+Install directly from GitHub:
 ```bash
-cargo run
+cargo install --git https://github.com/nat1anwastaken/fortis.git
 ```
 
-On first launch, press `S` to open settings and configure your Deepgram API key.
+This will install the `fortis` binary to your Cargo bin directory (typically `~/.cargo/bin/`).
+
+> **Note:** We plan to publish this to [crates.io](https://crates.io) in the future, which will allow installation via `cargo install fortis`.
+
+## Setup
+
+On first launch, run:
+```bash
+fortis
+```
+
+Press `S` to open settings and configure your Deepgram API key.
 
 ## Usage
 

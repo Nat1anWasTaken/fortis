@@ -3,6 +3,10 @@ name = "fortis"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "fortis"
+path = "src/main.rs"
+
 [dependencies]
 deepgram = "0.7"
 tokio = { version = "1", features = ["full"] }
