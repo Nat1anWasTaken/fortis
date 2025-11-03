@@ -30,6 +30,8 @@ pub struct AppState {
     speaker_map: HashMap<i32, String>,
     /// Application configuration manager
     config: ConfigManager,
+    /// Tracks whether the audio capture worker needs to restart with a new device
+    audio_device_restart_needed: bool,
 }
 
 /// Recording session tracking
@@ -45,8 +47,7 @@ struct RecordingSession {
 impl AppState {
     pub fn new() -> Self {
         let mut config = ConfigManager::with_default_schema();
-        let (current_device_index, current_device_name) =
-            Self::resolve_audio_device(&mut config);
+        let (current_device_index, current_device_name) = Self::resolve_audio_device(&mut config);
 
         Self {
             should_quit: Arc::new(AtomicBool::new(false)),
@@ -60,6 +61,7 @@ impl AppState {
             current_device_name,
             speaker_map: HashMap::new(),
             config,
+            audio_device_restart_needed: false,
         }
     }
 
@@ -159,6 +161,7 @@ impl AppState {
                 self.current_device_name
             );
         }
+        self.audio_device_restart_needed = true;
     }
 
     /// Get the display name for a speaker ID
@@ -254,8 +257,20 @@ impl AppState {
     /// Synchronize the active audio device with the persisted configuration.
     pub fn sync_audio_device_from_config(&mut self) {
         let (index, name) = Self::resolve_audio_device(&mut self.config);
-        self.current_device_index = index;
-        self.current_device_name = name;
+        if index != self.current_device_index || name != self.current_device_name {
+            self.current_device_index = index;
+            self.current_device_name = name;
+            self.audio_device_restart_needed = true;
+        }
+    }
+
+    /// Returns whether audio capture should restart, clearing the pending flag.
+    pub fn take_audio_device_restart_needed(&mut self) -> bool {
+        let restart = self.audio_device_restart_needed;
+        if restart {
+            self.audio_device_restart_needed = false;
+        }
+        restart
     }
 
     fn resolve_audio_device(config: &mut ConfigManager) -> (usize, String) {
@@ -269,7 +284,9 @@ impl AppState {
                         placeholder_value.clone(),
                         "No input devices detected",
                     )];
-                    if let Err(err) = config.update_select_options(DEVICE_KEY, options, Some(placeholder_value)) {
+                    if let Err(err) =
+                        config.update_select_options(DEVICE_KEY, options, Some(placeholder_value))
+                    {
                         eprintln!(
                             "Warning: failed to refresh audio device options after empty enumeration: {err}"
                         );
@@ -283,32 +300,32 @@ impl AppState {
                     .collect();
                 let default_candidate = new_options.first().map(|opt| opt.value.clone());
 
-                let needs_option_refresh = config
-                    .entry(DEVICE_KEY)
-                    .ok()
-                    .map(|entry| match &entry.field {
-                        ConfigField::Select { default, options } => {
-                            if options.len() != new_options.len() {
-                                return true;
+                let needs_option_refresh =
+                    config
+                        .entry(DEVICE_KEY)
+                        .ok()
+                        .map(|entry| match &entry.field {
+                            ConfigField::Select { default, options } => {
+                                if options.len() != new_options.len() {
+                                    return true;
+                                }
+                                if options.iter().zip(new_options.iter()).any(
+                                    |(existing, updated)| {
+                                        existing.value != updated.value
+                                            || existing.label != updated.label
+                                    },
+                                ) {
+                                    return true;
+                                }
+                                if let Some(default_value) = &default_candidate {
+                                    default_value != default
+                                } else {
+                                    false
+                                }
                             }
-                            if options
-                                .iter()
-                                .zip(new_options.iter())
-                                .any(|(existing, updated)| {
-                                    existing.value != updated.value || existing.label != updated.label
-                                })
-                            {
-                                return true;
-                            }
-                            if let Some(default_value) = &default_candidate {
-                                default_value != default
-                            } else {
-                                false
-                            }
-                        }
-                        _ => true,
-                    })
-                    .unwrap_or(true);
+                            _ => true,
+                        })
+                        .unwrap_or(true);
 
                 if needs_option_refresh {
                     if let Err(err) = config.update_select_options(
@@ -316,15 +333,15 @@ impl AppState {
                         new_options.clone(),
                         default_candidate.clone(),
                     ) {
-                        eprintln!(
-                            "Warning: failed to refresh audio device options: {err}"
-                        );
+                        eprintln!("Warning: failed to refresh audio device options: {err}");
                     }
                 }
 
-                let desired = config
-                    .select_value(DEVICE_KEY)
-                    .unwrap_or_else(|_| default_candidate.clone().unwrap_or_else(|| devices[0].clone()));
+                let desired = config.select_value(DEVICE_KEY).unwrap_or_else(|_| {
+                    default_candidate
+                        .clone()
+                        .unwrap_or_else(|| devices[0].clone())
+                });
 
                 if let Some(index) = devices.iter().position(|name| name == &desired) {
                     (index, desired)

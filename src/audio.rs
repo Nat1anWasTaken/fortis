@@ -57,6 +57,7 @@ pub fn capture_audio_from_mic_with_device(
     tx: UnboundedSender<Vec<u8>>,
     should_stop: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
+    worker_stop: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn Error>> {
     let device = get_device_by_index(device_index)?;
 
@@ -80,7 +81,7 @@ pub fn capture_audio_from_mic_with_device(
     stream.play()?;
 
     // Keep the stream alive until should_stop is signaled
-    while !should_stop.load(Ordering::SeqCst) {
+    while !should_stop.load(Ordering::SeqCst) && !worker_stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(100));
     }
 

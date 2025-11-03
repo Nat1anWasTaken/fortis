@@ -700,10 +700,7 @@ fn update_select_options_in_group(
                             *entry_options = options.to_vec();
                             if let Some(default_value) = default {
                                 *entry_default = default_value.clone();
-                            } else if !entry_options
-                                .iter()
-                                .any(|opt| opt.value == *entry_default)
-                            {
+                            } else if !entry_options.iter().any(|opt| opt.value == *entry_default) {
                                 if let Some(first) = entry_options.first() {
                                     *entry_default = first.value.clone();
                                 }
@@ -756,10 +753,7 @@ fn default_storage_path() -> PathBuf {
 fn audio_device_select_options() -> (String, Vec<SelectOption>) {
     match crate::audio::list_audio_devices() {
         Ok(devices) if !devices.is_empty() => {
-            let default = devices
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "".to_string());
+            let default = devices.first().cloned().unwrap_or_else(|| "".to_string());
             let options = devices
                 .into_iter()
                 .map(|name| SelectOption::new(name.clone(), name))

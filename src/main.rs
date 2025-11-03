@@ -1,4 +1,7 @@
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use crossterm::event::{Event, EventStream};
 use dotenv::dotenv;
@@ -18,6 +21,55 @@ use state::AppState;
 use transcribers::{create_transcriber, TranscriberConfig};
 use tui::{init_terminal, render_ui, restore_terminal, App};
 use widgets::TranscriptionMessage;
+
+struct AudioCaptureWorker {
+    stop_signal: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl AudioCaptureWorker {
+    fn spawn(
+        device_index: usize,
+        sender: mpsc::UnboundedSender<Vec<u8>>,
+        quit_signal: Arc<AtomicBool>,
+        pause_signal: Arc<AtomicBool>,
+    ) -> Self {
+        let worker_stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&worker_stop);
+        let quit = Arc::clone(&quit_signal);
+        let pause = Arc::clone(&pause_signal);
+        let handle = std::thread::spawn(move || {
+            if let Err(err) =
+                capture_audio_from_mic_with_device(device_index, sender, quit, pause, thread_stop)
+            {
+                eprintln!("Failed to capture audio: {err}");
+            }
+        });
+
+        Self {
+            stop_signal: worker_stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn restart(
+        &mut self,
+        device_index: usize,
+        sender: mpsc::UnboundedSender<Vec<u8>>,
+        quit_signal: Arc<AtomicBool>,
+        pause_signal: Arc<AtomicBool>,
+    ) {
+        self.stop();
+        *self = Self::spawn(device_index, sender, quit_signal, pause_signal);
+    }
+
+    fn stop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.stop_signal.store(true, Ordering::SeqCst);
+            let _ = handle.join();
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -45,24 +97,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
-    // Get handles for audio capture thread
-    let should_stop_audio = state.quit_handle();
-    let is_paused_audio = state.pause_handle();
-
-    // Spawn audio capture thread using the configured device
-    let selected_device_index = state.current_device_index();
-    let audio_thread = std::thread::spawn(move || {
-        if let Err(err) =
-            capture_audio_from_mic_with_device(
-                selected_device_index,
-                audio_tx,
-                should_stop_audio,
-                is_paused_audio,
-            )
-        {
-            eprintln!("Failed to capture audio: {err}");
-        }
-    });
+    let mut audio_worker = AudioCaptureWorker::spawn(
+        state.current_device_index(),
+        audio_tx.clone(),
+        state.quit_handle(),
+        state.pause_handle(),
+    );
 
     // Initialize transcriber with sample rate and channels
     transcriber.initialize(48000, 1).await?;
@@ -132,6 +172,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
+        if state.take_audio_device_restart_needed() {
+            audio_worker.restart(
+                state.current_device_index(),
+                audio_tx.clone(),
+                state.quit_handle(),
+                state.pause_handle(),
+            );
+        }
+
         if needs_redraw {
             terminal.draw(|frame| render_ui(frame, &mut app, &state))?;
             needs_redraw = false;
@@ -145,8 +194,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Restore terminal
     restore_terminal()?;
 
-    // Wait for audio thread and transcription task to complete
-    let _ = audio_thread.join();
+    audio_worker.stop();
     let _ = transcription_task.await;
 
     Ok(())
