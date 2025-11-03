@@ -18,7 +18,7 @@ mod widgets;
 
 use audio::capture_audio_from_mic_with_device;
 use state::AppState;
-use transcribers::{create_transcriber, TranscriberConfig};
+use transcribers::{create_transcriber, AudioTranscriber, TranscriberConfig};
 use tui::{init_terminal, render_ui, restore_terminal, App};
 use widgets::TranscriptionMessage;
 
@@ -82,19 +82,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = init_terminal()?;
     let mut app = App::new(&state);
 
-    // Resolve Deepgram credentials and preferences (config overrides environment)
-    let api_key = state
-        .deepgram_api_key()
-        .or_else(|| std::env::var("DEEPGRAM_API_KEY").ok())
-        .unwrap_or_else(|| "YOUR_DEEPGRAM_API_KEY".to_string());
-    let language = state.deepgram_language();
+    // Helper function to create and initialize a transcriber
+    async fn create_and_init_transcriber(state: &AppState) -> Result<Box<dyn AudioTranscriber>, Box<dyn Error>> {
+        // Resolve Deepgram credentials and preferences (config overrides environment)
+        let api_key = state
+            .deepgram_api_key()
+            .or_else(|| std::env::var("DEEPGRAM_API_KEY").ok())
+            .unwrap_or_else(|| "YOUR_DEEPGRAM_API_KEY".to_string());
+        let language = state.deepgram_language();
+        let model = state.deepgram_model();
 
-    // Create transcriber based on configuration
-    let config = TranscriberConfig::Deepgram { api_key, language };
-    let mut transcriber = create_transcriber(config)?;
+        // Create transcriber based on configuration
+        let config = TranscriberConfig::Deepgram {
+            api_key,
+            language,
+            model,
+        };
+        let mut transcriber = create_transcriber(config)?;
+        transcriber.initialize(48000, 1).await?;
+        Ok(transcriber)
+    }
 
     // Create channels for audio and transcription results
-    let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+    let (mut audio_tx, audio_rx) = mpsc::unbounded_channel();
     let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
     let mut audio_worker = AudioCaptureWorker::spawn(
@@ -104,11 +114,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         state.pause_handle(),
     );
 
-    // Initialize transcriber with sample rate and channels
-    transcriber.initialize(48000, 1).await?;
+    // Create and initialize initial transcriber
+    let mut transcriber = create_and_init_transcriber(&state).await?;
 
     // Spawn transcription task
-    let transcription_task = tokio::spawn(async move {
+    let mut transcription_task = tokio::spawn(async move {
         if let Err(err) = transcriber.process_audio_stream(audio_rx, result_tx).await {
             eprintln!("Transcription error: {err}");
         }
@@ -179,6 +189,42 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 state.quit_handle(),
                 state.pause_handle(),
             );
+        }
+
+        if state.take_transcriber_restart_needed() {
+            // Abort the old transcription task
+            transcription_task.abort();
+
+            // Create new channels
+            let (new_audio_tx, new_audio_rx) = mpsc::unbounded_channel();
+            let (new_result_tx, new_result_rx) = mpsc::unbounded_channel();
+
+            // Update channel references
+            audio_tx = new_audio_tx;
+            result_rx = new_result_rx;
+
+            // Restart audio worker with new audio_tx
+            audio_worker.restart(
+                state.current_device_index(),
+                audio_tx.clone(),
+                state.quit_handle(),
+                state.pause_handle(),
+            );
+
+            // Create and initialize new transcriber
+            match create_and_init_transcriber(&state).await {
+                Ok(mut new_transcriber) => {
+                    // Spawn new transcription task
+                    transcription_task = tokio::spawn(async move {
+                        if let Err(err) = new_transcriber.process_audio_stream(new_audio_rx, new_result_tx).await {
+                            eprintln!("Transcription error: {err}");
+                        }
+                    });
+                }
+                Err(err) => {
+                    eprintln!("Failed to restart transcriber: {err}");
+                }
+            }
         }
 
         if needs_redraw {

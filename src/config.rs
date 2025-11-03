@@ -980,6 +980,33 @@ fn default_schema() -> ConfigGroup {
                                     "Primary language hint sent with Deepgram streaming requests.",
                                 ),
                             ),
+                            ConfigNode::Entry(
+                                ConfigEntry::new(
+                                    "transcriber.deepgram.model",
+                                    "Model",
+                                    ConfigField::Select {
+                                        default: "nova-2".into(),
+                                        options: vec![
+                                            SelectOption::new("nova-3", "Nova 3 (Recommended for challenging audio)"),
+                                            SelectOption::new("nova-2", "Nova 2 (Best readability and accuracy)"),
+                                            SelectOption::new("nova-2-general", "Nova 2 General"),
+                                            SelectOption::new("nova-2-meeting", "Nova 2 Meeting"),
+                                            SelectOption::new("nova-2-phonecall", "Nova 2 Phone Call"),
+                                            SelectOption::new("nova-2-finance", "Nova 2 Finance"),
+                                            SelectOption::new("nova-2-conversationalai", "Nova 2 Conversational AI"),
+                                            SelectOption::new("nova-2-voicemail", "Nova 2 Voicemail"),
+                                            SelectOption::new("nova-2-video", "Nova 2 Video"),
+                                            SelectOption::new("nova-2-medical", "Nova 2 Medical"),
+                                            SelectOption::new("nova-2-drivethru", "Nova 2 Drive-thru"),
+                                            SelectOption::new("nova-2-automotive", "Nova 2 Automotive"),
+                                            SelectOption::new("nova-3-medical", "Nova 3 Medical"),
+                                        ],
+                                    },
+                                )
+                                .with_description(
+                                    "Select the Deepgram model for transcription. Nova 3 is recommended for challenging audio, Nova 2 provides the best readability.",
+                                ),
+                            ),
                         ]),
                 )]),
         ),

@@ -31,7 +31,11 @@ pub trait AudioTranscriber: Send + Sync {
 /// Configuration for creating a transcriber instance
 pub enum TranscriberConfig {
     /// Deepgram transcriber configuration
-    Deepgram { api_key: String, language: String },
+    Deepgram {
+        api_key: String,
+        language: String,
+        model: String,
+    },
 }
 
 /// Create a transcriber instance based on the provided configuration
@@ -39,8 +43,12 @@ pub fn create_transcriber(
     config: TranscriberConfig,
 ) -> Result<Box<dyn AudioTranscriber>, Box<dyn Error>> {
     match config {
-        TranscriberConfig::Deepgram { api_key, language } => {
-            let transcriber = deepgram::DeepgramTranscriber::new(&api_key, &language)?;
+        TranscriberConfig::Deepgram {
+            api_key,
+            language,
+            model,
+        } => {
+            let transcriber = deepgram::DeepgramTranscriber::new(&api_key, &language, &model)?;
             Ok(Box::new(transcriber))
         }
     }

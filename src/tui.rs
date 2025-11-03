@@ -109,6 +109,7 @@ impl App {
             if result.handled {
                 if result.value_changed {
                     state.sync_audio_device_from_config();
+                    state.sync_transcriber_from_config();
                     self.refresh_from_config(state);
                 }
                 if result.close {

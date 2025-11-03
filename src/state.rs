@@ -32,6 +32,12 @@ pub struct AppState {
     config: ConfigManager,
     /// Tracks whether the audio capture worker needs to restart with a new device
     audio_device_restart_needed: bool,
+    /// Current transcriber language setting
+    current_transcriber_language: String,
+    /// Current transcriber model setting
+    current_transcriber_model: String,
+    /// Tracks whether the transcriber needs to restart with new settings
+    transcriber_restart_needed: bool,
 }
 
 /// Recording session tracking
@@ -49,6 +55,13 @@ impl AppState {
         let mut config = ConfigManager::with_default_schema();
         let (current_device_index, current_device_name) = Self::resolve_audio_device(&mut config);
 
+        let current_transcriber_language = config
+            .select_value("transcriber.deepgram.language")
+            .unwrap_or_else(|_| "en-US".to_string());
+        let current_transcriber_model = config
+            .select_value("transcriber.deepgram.model")
+            .unwrap_or_else(|_| "nova-2".to_string());
+
         Self {
             should_quit: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
@@ -62,6 +75,9 @@ impl AppState {
             speaker_map: HashMap::new(),
             config,
             audio_device_restart_needed: false,
+            current_transcriber_language,
+            current_transcriber_model,
+            transcriber_restart_needed: false,
         }
     }
 
@@ -254,6 +270,13 @@ impl AppState {
             .unwrap_or_else(|_| "en-US".to_string())
     }
 
+    /// Configured Deepgram model (defaults to nova-2).
+    pub fn deepgram_model(&self) -> String {
+        self.config
+            .select_value("transcriber.deepgram.model")
+            .unwrap_or_else(|_| "nova-2".to_string())
+    }
+
     /// Synchronize the active audio device with the persisted configuration.
     pub fn sync_audio_device_from_config(&mut self) {
         let (index, name) = Self::resolve_audio_device(&mut self.config);
@@ -264,11 +287,32 @@ impl AppState {
         }
     }
 
+    /// Synchronize transcriber settings from configuration.
+    pub fn sync_transcriber_from_config(&mut self) {
+        let language = self.deepgram_language();
+        let model = self.deepgram_model();
+
+        if language != self.current_transcriber_language || model != self.current_transcriber_model {
+            self.current_transcriber_language = language;
+            self.current_transcriber_model = model;
+            self.transcriber_restart_needed = true;
+        }
+    }
+
     /// Returns whether audio capture should restart, clearing the pending flag.
     pub fn take_audio_device_restart_needed(&mut self) -> bool {
         let restart = self.audio_device_restart_needed;
         if restart {
             self.audio_device_restart_needed = false;
+        }
+        restart
+    }
+
+    /// Returns whether transcriber should restart, clearing the pending flag.
+    pub fn take_transcriber_restart_needed(&mut self) -> bool {
+        let restart = self.transcriber_restart_needed;
+        if restart {
+            self.transcriber_restart_needed = false;
         }
         restart
     }

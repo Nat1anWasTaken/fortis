@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Duration;
 
-use deepgram::common::options::{Encoding, Language, Options};
+use deepgram::common::options::{Encoding, Language, Model, Options};
 use deepgram::common::stream_response::StreamResponse;
 use deepgram::Deepgram;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -15,11 +15,12 @@ pub struct DeepgramTranscriber {
     sample_rate: u32,
     channels: u16,
     language: Option<Language>,
+    model: Option<Model>,
 }
 
 impl DeepgramTranscriber {
     /// Create a new Deepgram transcriber instance
-    pub fn new(api_key: &str, language_code: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn new(api_key: &str, language_code: &str, model_name: &str) -> Result<Self, Box<dyn Error>> {
         let client = Deepgram::new(api_key)?;
 
         Ok(Self {
@@ -27,6 +28,7 @@ impl DeepgramTranscriber {
             sample_rate: 0,
             channels: 0,
             language: parse_language_code(language_code),
+            model: parse_model_name(model_name),
         })
     }
 
@@ -124,6 +126,10 @@ impl AudioTranscriber for DeepgramTranscriber {
 
         if let Some(language) = self.language.clone() {
             builder = builder.language(language);
+        }
+
+        if let Some(model) = self.model.clone() {
+            builder = builder.model(model);
         }
 
         let options = builder.build();
@@ -248,6 +254,25 @@ fn parse_language_code(code: &str) -> Option<Language> {
         "ms" => Some(Language::ms),
         "taq" => Some(Language::taq),
         "ca" => Some(Language::ca),
+        _ => None,
+    }
+}
+
+fn parse_model_name(model: &str) -> Option<Model> {
+    match model {
+        "nova-3" => Some(Model::Nova3),
+        "nova-2" => Some(Model::Nova2),
+        "nova-2-general" => Some(Model::Nova2),
+        "nova-2-meeting" => Some(Model::Nova2Meeting),
+        "nova-2-phonecall" => Some(Model::Nova2Phonecall),
+        "nova-2-finance" => Some(Model::Nova2Finance),
+        "nova-2-conversationalai" => Some(Model::Nova2Conversationalai),
+        "nova-2-voicemail" => Some(Model::Nova2Voicemail),
+        "nova-2-video" => Some(Model::Nova2Video),
+        "nova-2-medical" => Some(Model::Nova2Medical),
+        "nova-2-drivethru" => Some(Model::Nova2Drivethru),
+        "nova-2-automotive" => Some(Model::Nova2Automotive),
+        "nova-3-medical" => Some(Model::Nova3Medical),
         _ => None,
     }
 }
