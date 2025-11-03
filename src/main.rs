@@ -241,6 +241,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     restore_terminal()?;
 
     audio_worker.stop();
+
+    // Drop the audio channel so the transcription task can finish
+    drop(audio_tx);
+
     let _ = transcription_task.await;
 
     Ok(())
